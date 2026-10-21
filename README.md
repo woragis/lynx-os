@@ -21,3 +21,12 @@ O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A a
 Cadastre no painel o nome e domínio base do SaaS e uma API key com somente os escopos `provisioning:read` e `provisioning:write`. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. O painel consulta `GET /api/v1/provisioning`, confere `contractVersion: "1"` e então chama `POST /api/v1/provisioning` com `Idempotency-Key`.
 
 Por enquanto o banco é SQLite local. Em produção, use um volume persistente e uma única instância da aplicação. As chaves OpenAI, Telegram, sessão e cifragem devem vir do gerenciador de segredos do ambiente de deploy. A rotação de `LYNX_ENCRYPTION_KEY` exige recriptografar os registros antes de descartar a chave antiga.
+
+## Testes
+
+- `npm run test:unit`: testes unitários de funções isoladas (Vitest).
+- `npm run test:integration`: testes com SQLite isolado e um SaaS HTTP local simulado; não chama Telegram, OpenAI ou serviços externos.
+- `npm run test:e2e`: fluxos do painel em Chromium via Playwright. Na primeira execução, instale o navegador com `npx playwright install chromium`.
+- `npm test`: executa os três níveis em sequência.
+
+Os bancos de teste ficam em `.test/`, separados do banco de desenvolvimento e ignorados pelo Git. As credenciais E2E são descartáveis e definidas no arquivo de configuração.
