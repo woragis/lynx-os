@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Integration {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+  baseUrl             String
+  encryptedApiKey     String
+  apiKeyIv            String
+  apiKeyAuthTag       String
+  active              Boolean  @default(true)
+  revokedAt           DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  provisioningRecords ProvisioningRecord[]
+}
+
+model ProvisioningRecord {
+  id             String      @id @default(cuid())
+  idempotencyKey String      @unique
+  integrationId  String
+  payloadHash    String
+  payloadCiphertext String
+  payloadIv        String
+  payloadAuthTag   String
+  status         String
+  responseCiphertext String?
+  responseIv         String?
+  responseAuthTag    String?
+  createdAt      DateTime    @default(now())
+  integration    Integration @relation(fields: [integrationId], references: [id])
+}
+
+model TelegramConversation {
+  chatId    String   @id
+  state     String
+  draftJson String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  action         String
+  integrationId  String?
+  requestId      String?
+  result         String
+  createdAt      DateTime @default(now())
+}

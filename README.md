@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lynx OS
 
-## Getting Started
+Central de operações da Lynx para integrar os SaaS e provisionar uma empresa, o primeiro cliente e o usuário responsável. Aplicação Next.js 16 App Router, React 19, TypeScript estrito e Prisma 7 com SQLite no primeiro ambiente.
 
-First, run the development server:
+## Desenvolvimento
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Copie `.env.example` para `.env` e configure as variáveis locais. Gere os segredos com `openssl rand -hex 32` para `LYNX_SESSION_SECRET` e `LYNX_ENCRYPTION_KEY` (a chave de cifragem precisa ter 64 caracteres hexadecimais).
+2. Configure `DATABASE_URL="file:./lynx-os.db"`.
+3. Execute `npm install`, `npm run db:migrate -- --name initial` e `npm run dev`.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+O primeiro usuário é configurado por `LYNX_ADMIN_EMAIL` e `LYNX_ADMIN_PASSWORD`. Nunca use os valores de exemplo em produção. `.env` é ignorado pelo Git.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Telegram
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Cadastre o webhook depois do deploy executando `npm run telegram:set-webhook`. O bot só aceita mensagens privadas de IDs presentes na allowlist. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
 
-## Learn More
+O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor.
 
-To learn more about Next.js, take a look at the following resources:
+## Integrações
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Cadastre no painel o nome e domínio base do SaaS e uma API key com somente os escopos `provisioning:read` e `provisioning:write`. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. O painel consulta `GET /api/v1/provisioning`, confere `contractVersion: "1"` e então chama `POST /api/v1/provisioning` com `Idempotency-Key`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Por enquanto o banco é SQLite local. Em produção, use um volume persistente e uma única instância da aplicação. As chaves OpenAI, Telegram, sessão e cifragem devem vir do gerenciador de segredos do ambiente de deploy. A rotação de `LYNX_ENCRYPTION_KEY` exige recriptografar os registros antes de descartar a chave antiga.
