@@ -6,3 +6,41 @@
 .integration-actions{display:flex;align-items:center;gap:7px}.rotate-details{position:relative}.rotate-details summary{cursor:pointer;font-size:10px;color:#5b6465;list-style:none;border:1px solid var(--line);border-radius:7px;padding:7px 9px}.rotate-details form{position:absolute;z-index:5;right:0;top:34px;width:230px;padding:12px;background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 30px #1920201a;display:grid;gap:8px}.rotate-details input{height:35px;border:1px solid var(--line);border-radius:6px;padding:0 9px;font-size:10px}.rotate-details button{border:0;border-radius:6px;background:var(--ink);color:#fff;padding:8px;font-size:10px}
 .revoke-button{color:#a43726;border-color:#f0d3ce}
 .revoke-details{position:relative}.revoke-details summary{cursor:pointer;font-size:10px;color:#a43726;list-style:none;border:1px solid #f0d3ce;border-radius:7px;padding:7px 9px}.revoke-details form{position:absolute;z-index:5;right:0;top:34px;width:250px;padding:12px;background:#fff;border:1px solid #f0d3ce;border-radius:9px;box-shadow:0 12px 30px #1920201a;display:grid;gap:9px}.revoke-details p{margin:0;font-size:10px;line-height:1.5;color:#737b7d}.revoke-details button{border:0;border-radius:6px;background:#a43726;color:#fff;padding:8px;font-size:10px}
+
+/* Identidade Lynx: base noturna, superfícies profundas e índigo como cor de ação. */
+:root{--ink:#f1f2f8;--muted:#a5a8b8;--line:#292b39;--paper:#080912;--surface:#11131f;--accent:#6975e5;--green:#8792ff;--font-sans:Arial,Helvetica,sans-serif}
+body{background:radial-gradient(ellipse at 75% 8%,#171a38 0,transparent 38%),var(--paper);color:var(--ink)}
+.login-screen{grid-template-columns:minmax(320px,500px) minmax(250px,420px);gap:clamp(35px,9vw,140px);background:radial-gradient(ellipse at 72% 47%,#171a3b 0,transparent 43%),linear-gradient(115deg,#070810,#0b0d19 58%,#090a13);padding:48px clamp(26px,8vw,120px)}
+.login-card{width:100%;background:transparent;border:0;border-radius:0;padding:30px 0;box-shadow:none}
+.login-brand{display:flex;align-items:center;gap:14px;margin-bottom:58px}
+.login-brand-logo,.brand-logo{object-fit:cover;mix-blend-mode:screen}
+.login-brand-logo{width:58px;height:58px;border-radius:50%;object-fit:cover}
+.login-brand .eyebrow{margin:0 0 4px;color:#8991d9;font-size:9px;letter-spacing:.2em}
+.login-brand-name{font-size:17px;font-weight:750;letter-spacing:.17em;margin:0}.login-brand-name span{color:#7782ef;font-weight:500}
+.login-card h1{font-size:clamp(43px,5vw,64px);font-weight:450;line-height:1.06;letter-spacing:-3px;margin:0 0 19px}
+.login-card h1 span{color:#7883f1;font-weight:700}
+.login-description{max-width:390px;color:#b6b8c5;font-size:16px;line-height:1.55;margin:0}
+.login-card .stack-form{max-width:420px;margin-top:30px;gap:16px}
+.stack-form label,.field-grid label{color:#d9dbe7}
+.stack-form input,.field-grid input,.field-grid select{border-color:#303247;background:#111421;color:#f3f4fa}
+.stack-form input:focus,.field-grid input:focus,.field-grid select:focus{border-color:#7984f5;box-shadow:0 0 0 3px #6975e533}
+.button-dark{background:#6571df;color:#fff}.button-dark:hover{background:#7c87f5}
+.login-card .button{margin-top:5px}
+.fine-print{border-color:#292b39;color:#85899e}
+.login-visual{position:relative;min-height:460px;display:grid;place-items:center;overflow:hidden}
+.login-visual-glow{position:absolute;width:72%;aspect-ratio:1;border-radius:50%;background:#5361ed22;filter:blur(52px)}
+.login-hero-logo{z-index:1;width:min(100%,370px);height:auto;mix-blend-mode:screen;filter:drop-shadow(0 0 44px #5e68dc26)}
+.login-visual>p{position:absolute;z-index:2;bottom:23px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:12px;font-weight:750;letter-spacing:.22em;color:#f4f5fb}
+.login-visual>p span{font-size:8px;color:#9ba0bb;letter-spacing:.2em;margin-left:9px}
+.error-banner{background:#321c28;color:#ffb6c3}.success-banner{background:#172b32;color:#a7e5d5}
+.app-shell{background:transparent}.sidebar{background:#090a12;border-right:1px solid #202231}.brand{font-size:16px;letter-spacing:.08em;color:#f4f5fa}.brand-light{color:#858ba9;font-weight:500;letter-spacing:.06em}.brand-logo{width:36px;height:36px;border-radius:50%}
+.nav-caption{color:#777d9e}.main-nav a{color:#aeb1c2}.main-nav a:hover,.main-nav a[aria-current="page"]{background:#171a2a;color:#f7f8ff}.main-nav a[aria-current="page"]{box-shadow:inset 2px 0 #7d88f4}.nav-icon{color:#8791ff}
+.sidebar-bottom{border-color:#292b39;color:#aeb2c4}.status-dot,.secure-tag span{background:#7c87fa;box-shadow:0 0 0 3px #7c87fa25}.logout-button{color:#b8bbcb}
+.main-area{background:transparent}.topbar{background:#0b0c15;border-color:#252737;color:#aeb1c2}.crumb{color:#858bab}.crumb-separator{color:#5e627a}.user-pill{color:#d6d8e3}.avatar{background:#242842;color:#aab2ff}
+.page-heading h1{color:#f0f1f8}.count-badge,.secure-tag{color:#b5b8ca;border-color:#303246;background:#11131f}.secure-tag span{box-shadow:0 0 0 3px #7c87fa25}
+.panel,.integration-card,.empty-state,.result-card{background:#11131f;border-color:#292b39}.panel-icon,.step-number,.empty-mark,.role-icon{background:#20243c;color:#929cff}.integration-logo{background:#242840;color:#b4baff}.integration-details>p{color:#a0a4b7}.key-hint{color:#83879c}.state-chip.active{color:#b6c1ff;background:#252947}.state-chip.paused{color:#b0b2bf;background:#272833}.quiet-button{color:#d4d6e3;border-color:#36384b;background:#151725}
+.empty-state{border-color:#383a51}.empty-state p,.section-heading p,.submit-row p{color:#a2a6b9}.security-note{border-color:#303452;background:#14182a;color:#bbc2ff}.security-note strong{color:#e1e4ff}.integration-form-panel .small-text{color:#a2a6b9}
+.role-preview{border-color:#303246;background:#151725}.role-preview div span{color:#a0a4b5}.result-icon{background:#252947;color:#aab3ff}.result-card pre{background:#090b14;color:#d9dbea}.integration-name-row h2,.panel-title h2,.section-heading h2,.result-card h2,.empty-state h2{color:#f0f1f8}
+.rotate-details summary,.revoke-details summary{background:#141624}.rotate-details form,.revoke-details form{background:#141624;border-color:#303246;box-shadow:0 12px 30px #0008}.rotate-details input{background:#0c0e18;border-color:#37394d;color:#f1f2f8}.rotate-details button{background:#6571df}.revoke-details p{color:#b7bac8}
+@media(max-width:900px){.login-screen{grid-template-columns:minmax(300px,500px) minmax(200px,300px);gap:30px;padding:35px}.login-visual{min-height:350px}.login-hero-logo{width:min(100%,290px)}}
+@media(max-width:640px){.login-screen{display:block;padding:26px 22px;min-height:100svh}.login-card{padding:10px 0 28px}.login-brand{margin-bottom:42px}.login-card h1{font-size:46px;letter-spacing:-2.4px}.login-description{font-size:14px}.login-visual{display:none}.sidebar{background:#090a12;border-bottom:1px solid #252737}.page-wrap{background:transparent}}

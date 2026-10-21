@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { logoutAction } from "@/app/actions";
 import { requireSession } from "@/lib/server/session";
 import { MainNav } from "@/components/main-nav";
@@ -7,7 +8,7 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
   await requireSession();
   return <div className="app-shell">
     <aside className="sidebar">
-      <Link className="brand" href="/provisioning"><span className="brand-mark small">L</span><span>lynx<span className="brand-light">/os</span></span></Link>
+      <Link className="brand" href="/provisioning"><Image className="brand-logo" src="/lynx.jpg" alt="" width={38} height={38} /><span>LYNX<span className="brand-light"> / OS</span></span></Link>
       <p className="nav-caption">CENTRAL</p>
       <MainNav />
       <div className="sidebar-bottom"><div className="status-dot" /> Ambiente seguro <form action={logoutAction}><button className="logout-button">Sair ↗</button></form></div>
