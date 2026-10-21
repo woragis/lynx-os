@@ -12,9 +12,13 @@ O primeiro usuário é configurado por `LYNX_ADMIN_EMAIL` e `LYNX_ADMIN_PASSWORD
 
 ## Telegram
 
-Configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Cadastre o webhook depois do deploy executando `npm run telegram:set-webhook`. O bot só aceita mensagens privadas de IDs presentes na allowlist. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
+O transporte do bot roda em um serviço dedicado em Go, em `telegram-bot/`. Ele valida o webhook do Telegram, encaminha a atualização ao endpoint interno autenticado do Next.js e envia a resposta ao chat. O Next.js segue responsável por OpenAI, conversas, allowlist e provisionamento.
 
-O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor.
+Configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_URL`, `LYNX_TELEGRAM_INTERNAL_TOKEN`, `LYNX_OS_INTERNAL_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Gere o token interno com pelo menos 32 caracteres aleatórios; o mesmo valor precisa estar no Next.js e no processo Go. Em desenvolvimento, inicie o bot com `npm run telegram:dev`. Depois que o serviço Go estiver publicado por HTTPS, configure `TELEGRAM_WEBHOOK_URL` para terminar em `/webhooks/telegram` e execute `npm run telegram:set-webhook`. O bot só aceita mensagens privadas de IDs presentes na allowlist. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
+
+O fluxo e as opções de execução do processo estão em [`telegram-bot/README.md`](telegram-bot/README.md). Em produção, publique o serviço Go atrás do HTTPS do domínio e mantenha o endpoint Next.js interno na rede privada.
+
+O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor Next.js; o serviço Go não recebe essa chave.
 
 ## Integrações
 

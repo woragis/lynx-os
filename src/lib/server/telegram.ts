@@ -26,18 +26,13 @@ const fieldLabels: Record<keyof Draft, string> = {
 };
 const requiredKeys: (keyof Draft)[] = ["integrationName", "accountName", "accountTaxId", "accountEmail", "accountAddress", "customerTradeName", "customerTaxId", "customerTaxRegime", "relationshipType", "customerStatus", "userName", "userEmail"];
 
-type TelegramUpdate = {
-  message?: { text?: string; from?: { id: number }; chat?: { id: number; type: string } };
-};
-
-async function sendTelegram(chatId: number, text: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN não configurado.");
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }), signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok) throw new Error(`Telegram sendMessage respondeu ${response.status}.`);
-}
+const TelegramUpdateSchema = z.object({
+  message: z.object({
+    text: z.string().optional(),
+    from: z.object({ id: z.number().int() }).optional(),
+    chat: z.object({ id: z.number().int(), type: z.string() }).optional(),
+  }).optional(),
+});
 
 function missing(draft: Draft) {
   return requiredKeys.filter((key) => !draft[key]?.trim()).map((key) => fieldLabels[key]);
@@ -103,23 +98,24 @@ function formatPreview(draft: Draft, integrationName: string) {
   ].join("\n");
 }
 
-export async function processTelegramUpdate(update: TelegramUpdate) {
+export async function processTelegramUpdate(input: unknown): Promise<string | null> {
+  const parsed = TelegramUpdateSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const update = parsed.data;
   const message = update.message;
   const text = message?.text?.trim();
   const fromId = message?.from?.id;
   const chatId = message?.chat?.id;
-  if (!text || !fromId || !chatId || message?.chat?.type !== "private") return;
+  if (!text || !fromId || !chatId || message?.chat?.type !== "private") return null;
   const allowedIds = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-  if (!allowedIds.includes(String(fromId))) return;
+  if (!allowedIds.includes(String(fromId))) return null;
 
   if (text === "/start") {
-    await sendTelegram(chatId, "Lynx OS pronto. Descreva o sistema e os dados do escritório, do cliente e da pessoa que terá acesso. Vou revisar tudo com você antes de cadastrar.\n\nUse /cancelar para apagar o rascunho.");
-    return;
+    return "Lynx OS pronto. Descreva o sistema e os dados do escritório, do cliente e da pessoa que terá acesso. Vou revisar tudo com você antes de cadastrar.\n\nUse /cancelar para apagar o rascunho.";
   }
   if (text.toLocaleLowerCase("pt-BR") === "/cancelar" || text.toLocaleLowerCase("pt-BR") === "cancelar") {
     await db.telegramConversation.deleteMany({ where: { chatId: String(chatId) } });
-    await sendTelegram(chatId, "Rascunho descartado.");
-    return;
+    return "Rascunho descartado.";
   }
 
   const conversation = await db.telegramConversation.findUnique({ where: { chatId: String(chatId) } });
@@ -128,23 +124,20 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   }
   if (conversation && Date.now() - conversation.updatedAt.getTime() <= 24 * 60 * 60 * 1000 && conversation.state === "AWAITING_CONFIRMATION") {
     if (text.toLocaleUpperCase("pt-BR") !== "CONFIRMAR") {
-      await sendTelegram(chatId, "O rascunho está pronto. Responda CONFIRMAR para executar ou CANCELAR para descartar.");
-      return;
+      return "O rascunho está pronto. Responda CONFIRMAR para executar ou CANCELAR para descartar.";
     }
     const stored = JSON.parse(conversation.draftJson) as { integrationId: string; draft: Draft; idempotencyKey: string };
     const payload = payloadFromDraft(stored.draft);
     try {
       const outcome = await executeProvisioning(stored.integrationId, payload, stored.idempotencyKey);
       if (outcome.status === "RETRYABLE") {
-        await sendTelegram(chatId, "O SaaS respondeu com uma falha temporária. Responda CONFIRMAR para tentar de novo com a mesma chave segura, ou CANCELAR para descartar.");
-        return;
+        return "O SaaS respondeu com uma falha temporária. Responda CONFIRMAR para tentar de novo com a mesma chave segura, ou CANCELAR para descartar.";
       }
       await db.telegramConversation.deleteMany({ where: { chatId: String(chatId) } });
-      await sendTelegram(chatId, `Solicitação enviada. Estado: ${outcome.status}.\n${JSON.stringify(outcome.body).slice(0, 2800)}`);
+      return `Solicitação enviada. Estado: ${outcome.status}.\n${JSON.stringify(outcome.body).slice(0, 2800)}`;
     } catch {
-      await sendTelegram(chatId, "Não consegui concluir a chamada. O mesmo pedido pode ser enviado novamente com segurança; confira o painel para o resultado.");
+      return "Não consegui concluir a chamada. O mesmo pedido pode ser enviado novamente com segurança; confira o painel para o resultado.";
     }
-    return;
   }
 
   const integrations = await db.integration.findMany({ where: { active: true }, select: { id: true, name: true, slug: true } });
@@ -153,18 +146,16 @@ export async function processTelegramUpdate(update: TelegramUpdate) {
   try {
     draft = cleanDraft(await extractDraft(text, previous, integrations), previous);
   } catch {
-    await sendTelegram(chatId, "Não consegui organizar os dados agora. Tente descrever o cadastro em frases simples ou continue informando os campos que faltam.");
-    return;
+    return "Não consegui organizar os dados agora. Tente descrever o cadastro em frases simples ou continue informando os campos que faltam.";
   }
   const integration = integrations.find((item) => item.slug === draft.integrationName?.toLocaleLowerCase("pt-BR") || item.name.toLocaleLowerCase("pt-BR") === draft.integrationName?.toLocaleLowerCase("pt-BR"));
   const stillMissing = missing(draft);
   if (!integration) stillMissing.unshift("sistema conectado (" + integrations.map((item) => item.name).join(", ") + ")");
   if (stillMissing.length || !integration) {
     await db.telegramConversation.upsert({ where: { chatId: String(chatId) }, create: { chatId: String(chatId), state: "COLLECTING", draftJson: JSON.stringify({ draft }) }, update: { state: "COLLECTING", draftJson: JSON.stringify({ draft }) } });
-    await sendTelegram(chatId, `Ainda preciso de: ${stillMissing.join(", ")}.\n\nPode mandar os dados que faltam em uma mensagem. Use /cancelar para começar de novo.`);
-    return;
+    return `Ainda preciso de: ${stillMissing.join(", ")}.\n\nPode mandar os dados que faltam em uma mensagem. Use /cancelar para começar de novo.`;
   }
   const idempotencyKey = `tg-${randomUUID()}`;
   await db.telegramConversation.upsert({ where: { chatId: String(chatId) }, create: { chatId: String(chatId), state: "AWAITING_CONFIRMATION", draftJson: JSON.stringify({ integrationId: integration.id, draft, idempotencyKey }) }, update: { state: "AWAITING_CONFIRMATION", draftJson: JSON.stringify({ integrationId: integration.id, draft, idempotencyKey }) } });
-  await sendTelegram(chatId, formatPreview(draft, integration.name));
+  return formatPreview(draft, integration.name);
 }
