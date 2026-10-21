@@ -3,16 +3,37 @@ import { provisionAction, retryProvisionAction } from "@/app/actions";
 import { decryptSecret } from "@/lib/server/crypto";
 import { db } from "@/lib/server/db";
 
+type ProvisioningAccess = { url: string; email: string; invitationState?: string };
+
+function getProvisioningAccess(value: unknown): ProvisioningAccess | null {
+  if (!value || typeof value !== "object" || !("login" in value)) return null;
+  const login = value.login;
+  if (!login || typeof login !== "object" || !("url" in login) || !("email" in login)) return null;
+  if (typeof login.url !== "string" || typeof login.email !== "string") return null;
+  try {
+    const url = new URL(login.url);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  } catch {
+    return null;
+  }
+  const invitation = "invitation" in value ? value.invitation : null;
+  const invitationState = invitation && typeof invitation === "object" && "state" in invitation && typeof invitation.state === "string"
+    ? invitation.state
+    : undefined;
+  return { url: login.url, email: login.email, invitationState };
+}
+
 export default async function ProvisioningPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const params = await searchParams;
   const integrations = await db.integration.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true } });
   const request = params.request ? await db.provisioningRecord.findUnique({ where: { idempotencyKey: params.request }, select: { idempotencyKey: true, status: true, responseCiphertext: true, responseIv: true, responseAuthTag: true } }) : null;
   let result: unknown = null;
   try { result = request?.responseCiphertext && request.responseIv && request.responseAuthTag ? JSON.parse(decryptSecret(request.responseCiphertext, request.responseIv, request.responseAuthTag)) : null; } catch { result = "Não foi possível abrir a resposta armazenada."; }
+  const access = getProvisioningAccess(result);
   return <div className="page-wrap">
     <div className="page-heading"><div><p className="eyebrow">PROVISIONAMENTO CENTRAL</p><h1>Novo cadastro</h1><p className="muted">Uma solicitação. Empresa, cliente e acesso inicial no sistema escolhido.</p></div><div className="secure-tag"><span /> ROTA PADRÃO · V1</div></div>
     {params.erro && <p className="error-banner" role="alert">{params.erro === "conexao" ? "Não foi possível concluir a chamada. Você pode tentar novamente com segurança." : "Confira os campos obrigatórios e a integração ativa."}</p>}
-    {request && <section className="result-card"><div className="result-icon">{request.status === "COMPLETED" ? "✓" : "!"}</div><div><p className="eyebrow">RESPOSTA DO SISTEMA · {request.status}</p><h2>Resultado do provisionamento</h2><pre>{result ? JSON.stringify(result, null, 2) : "Sem resposta armazenada. Se houve timeout, reenvie com a mesma chave de idempotência."}</pre>{request.status === "RETRYABLE" && <form action={retryProvisionAction}><input type="hidden" name="idempotencyKey" value={request.idempotencyKey} /><button className="button button-dark" type="submit">Tentar novamente com segurança ↗</button></form>}</div></section>}
+    {request && <section className="result-card"><div className="result-icon">{request.status === "COMPLETED" ? "✓" : "!"}</div><div><p className="eyebrow">RESPOSTA DO SISTEMA · {request.status}</p><h2>Resultado do provisionamento</h2><pre>{result ? JSON.stringify(result, null, 2) : "Sem resposta armazenada. Se houve timeout, reenvie com a mesma chave de idempotência."}</pre>{access && <div className="provisioning-access"><p><strong>Login do EasyBill</strong><br /><a href={access.url} target="_blank" rel="noreferrer">{access.url} ↗</a><br />Usuário: {access.email}</p><p>{access.invitationState === "sent" ? "Convite enviado para criar a senha." : access.invitationState === "already_registered" ? "Conta existente vinculada; use a senha já cadastrada." : "Convite não enviado. O cadastro foi criado, mas é necessário configurar o e-mail para definir a senha."}</p></div>}{request.status === "RETRYABLE" && <form action={retryProvisionAction}><input type="hidden" name="idempotencyKey" value={request.idempotencyKey} /><button className="button button-dark" type="submit">Tentar novamente com segurança ↗</button></form>}</div></section>}
     {integrations.length === 0 ? <div className="empty-state wide-empty"><span className="empty-mark">◈</span><h2>Conecte seu primeiro SaaS</h2><p>Cadastre domínio e chave de provisionamento antes de iniciar.</p><a className="button button-dark" href="/integrations">Ir para integrações ↗</a></div> : <form action={provisionAction} className="provision-form">
       <input type="hidden" name="idempotencyKey" value={randomUUID()} />
       <section className="panel form-section"><div className="section-heading"><span className="step-number">01</span><div><h2>Sistema e empresa</h2><p>Conta principal do SaaS (tenant).</p></div></div>
