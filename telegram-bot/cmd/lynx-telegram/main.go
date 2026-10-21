@@ -17,7 +17,6 @@ import (
 func main() {
 	config := bot.Config{
 		BotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
-		WebhookSecret: os.Getenv("TELEGRAM_WEBHOOK_SECRET"),
 		LynxOSURL:     os.Getenv("LYNX_OS_INTERNAL_URL"),
 		InternalToken: os.Getenv("LYNX_TELEGRAM_INTERNAL_TOKEN"),
 	}
@@ -30,9 +29,10 @@ func main() {
 	if port == "" {
 		port = "8081"
 	}
+	handler := bot.NewHandler(config, nil)
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           bot.NewHandler(config, nil).Routes(),
+		Handler:           handler.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		WriteTimeout:      55 * time.Second,
@@ -45,6 +45,12 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
+	}()
+	go func() {
+		if err := handler.RunPolling(stopped); err != nil {
+			slog.Error("Telegram polling stopped", "error", err)
+			stop()
+		}
 	}()
 
 	slog.Info("Lynx Telegram service listening", "address", server.Addr)

@@ -3,8 +3,6 @@ package bot
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +18,6 @@ const maxUpdateBytes = 64_000
 
 type Config struct {
 	BotToken       string
-	WebhookSecret  string
 	LynxOSURL      string
 	InternalToken  string
 	TelegramAPIURL string
@@ -29,17 +26,6 @@ type Config struct {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.BotToken) == "" {
 		return errors.New("TELEGRAM_BOT_TOKEN is required")
-	}
-	if strings.TrimSpace(c.WebhookSecret) == "" {
-		return errors.New("TELEGRAM_WEBHOOK_SECRET is required")
-	}
-	if len(c.WebhookSecret) > 256 {
-		return errors.New("TELEGRAM_WEBHOOK_SECRET must not exceed 256 characters")
-	}
-	for _, char := range c.WebhookSecret {
-		if !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') && !(char >= '0' && char <= '9') && char != '_' && char != '-' {
-			return errors.New("TELEGRAM_WEBHOOK_SECRET contains unsupported characters")
-		}
 	}
 	if len(c.InternalToken) < 32 {
 		return errors.New("LYNX_TELEGRAM_INTERNAL_TOKEN must have at least 32 characters")
@@ -76,7 +62,7 @@ type Handler struct {
 
 func NewHandler(config Config, client *http.Client) *Handler {
 	if client == nil {
-		client = &http.Client{Timeout: 50 * time.Second}
+		client = &http.Client{Timeout: 40 * time.Second}
 	}
 	if config.TelegramAPIURL == "" {
 		config.TelegramAPIURL = "https://api.telegram.org"
@@ -84,51 +70,101 @@ func NewHandler(config Config, client *http.Client) *Handler {
 	return &Handler{config: config, client: client}
 }
 
+// RunPolling recebe atualizações diretamente do Telegram, sem expor uma porta
+// pública. O offset só avança depois que o processamento no Lynx OS termina.
+func (h *Handler) RunPolling(ctx context.Context) error {
+	if err := h.callTelegram(ctx, "deleteWebhook", map[string]any{"drop_pending_updates": false}, nil); err != nil {
+		return fmt.Errorf("disable Telegram webhook: %w", err)
+	}
+	var offset int64
+	for {
+		var updates struct {
+			OK     bool `json:"ok"`
+			Result []struct {
+				UpdateID int64           `json:"update_id"`
+				Message  json.RawMessage `json:"message"`
+			} `json:"result"`
+		}
+		if err := h.callTelegram(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "allowed_updates": []string{"message"}}, &updates); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			slog.Error("Telegram polling failed", "error", err)
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+			continue
+		}
+		if !updates.OK {
+			slog.Error("Telegram getUpdates returned ok=false")
+			continue
+		}
+		for _, update := range updates.Result {
+			body, err := json.Marshal(map[string]any{"update_id": update.UpdateID, "message": update.Message})
+			if err != nil {
+				offset = update.UpdateID + 1
+				continue
+			}
+			var message struct {
+				Chat struct {
+					ID int64 `json:"id"`
+				} `json:"chat"`
+			}
+			if len(update.Message) > 0 && json.Unmarshal(update.Message, &message) == nil && message.Chat.ID != 0 {
+				reply, processErr := h.process(ctx, body)
+				if processErr != nil {
+					slog.Error("Lynx OS did not process Telegram update", "update_id", update.UpdateID, "error", processErr)
+					break
+				}
+				if reply != nil && strings.TrimSpace(*reply) != "" {
+					if err := h.sendMessage(ctx, message.Chat.ID, *reply); err != nil {
+						slog.Error("Telegram response could not be delivered", "update_id", update.UpdateID, "error", err)
+					}
+				}
+			}
+			offset = update.UpdateID + 1
+		}
+	}
+}
+
+func (h *Handler) callTelegram(ctx context.Context, method string, payload any, result any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(h.config.TelegramAPIURL, "/") + "/bot" + h.config.BotToken + "/" + method
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := h.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("Telegram returned HTTP %d", response.StatusCode)
+	}
+	if result == nil {
+		return nil
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxUpdateBytes)).Decode(result); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
-	mux.HandleFunc("POST /webhooks/telegram", h.webhook)
 	return mux
-}
-
-func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
-	if !sameSecret(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"), h.config.WebhookSecret) {
-		writeJSON(w, http.StatusUnauthorized, map[string]bool{"ok": false})
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpdateBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]bool{"ok": false})
-		return
-	}
-	var update TelegramUpdate
-	if err := json.Unmarshal(body, &update); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]bool{"ok": false})
-		return
-	}
-	if update.Message == nil || update.Message.Chat.ID == 0 {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		return
-	}
-
-	reply, err := h.process(r.Context(), body)
-	if err != nil {
-		slog.Error("Lynx OS did not process Telegram update", "update_id", update.UpdateID, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]bool{"ok": false})
-		return
-	}
-	if reply != nil && strings.TrimSpace(*reply) != "" {
-		if err := h.sendMessage(r.Context(), update.Message.Chat.ID, *reply); err != nil {
-			// O domínio já processou a mensagem; responder 200 evita executar o
-			// mesmo comando novamente quando o Telegram retentar o webhook.
-			slog.Error("Telegram response could not be delivered", "update_id", update.UpdateID, "error", err)
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) process(ctx context.Context, body []byte) (*string, error) {
@@ -178,15 +214,6 @@ func (h *Handler) sendMessage(ctx context.Context, chatID int64, text string) er
 		return fmt.Errorf("Telegram returned HTTP %d", response.StatusCode)
 	}
 	return nil
-}
-
-func sameSecret(actual, expected string) bool {
-	if actual == "" || expected == "" {
-		return false
-	}
-	a := sha256.Sum256([]byte(actual))
-	e := sha256.Sum256([]byte(expected))
-	return subtle.ConstantTimeCompare(a[:], e[:]) == 1
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
