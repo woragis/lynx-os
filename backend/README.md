@@ -13,7 +13,7 @@ cd backend && set -a && . ./.env && set +a && go run ./cmd/http
 - `GET /health/live`: processo HTTP ativo.
 - `GET /health/ready`: verifica PostgreSQL e Redis e responde `503` se qualquer dependência não estiver pronta.
 
-As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. A primeira reproduz o armazenamento atual de integrações, operações, conversas e auditoria; a segunda adiciona identidade administrativa, sessões revogáveis, tokens de redefinição e vínculos do Telegram. As migrations ainda precisam ser aplicadas no banco de desenvolvimento.
+As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. A `000001` cria o armazenamento de integrações, operações, conversas e auditoria; a `000002` adiciona identidade administrativa, sessões revogáveis, tokens de redefinição e vínculos do Telegram; a `000003` adiciona convites de administradores e códigos temporários de vínculo. Elas precisam ser aplicadas em ordem antes de iniciar o backend.
 
 ## Contrato SaaS Lynx v1
 
@@ -23,7 +23,9 @@ As migrations SQL ficam em `migrations/` na raiz do repositório e são versiona
 
 Configure `LYNX_JWT_SIGNING_KEY` com pelo menos 32 bytes aleatórios. `GET /api/v1/auth/csrf` emite o token CSRF inicial; envie-o no header `X-CSRF-Token` para `POST /login`, `POST /refresh` e mutações autenticadas. A API define access JWT de 10 minutos e refresh opaco de 14 dias em cookies HttpOnly; a sessão associada ao JWT é conferida no PostgreSQL em cada chamada para permitir revogação imediata. Refresh é rotacionado atomicamente; reutilização revoga toda a família. Cookies ficam `Secure` quando `LYNX_ENV=production`. Login aplica limite de cinco tentativas por combinação de IP/e-mail em 15 minutos e falha fechado se Redis estiver indisponível.
 
-Depois de aplicar as migrations, crie o primeiro owner interativamente com `cd backend && set -a && . ./.env && set +a && go run ./cmd/create-admin`. A senha é lida sem eco, precisa ter de 12 a 72 bytes e é armazenada com bcrypt. O comando recusa criar outro owner. As rotas de autenticação incluem `/me`, listagem de sessões, revogação individual e revogação de todas as sessões. O JWT secret nunca deve ser rotacionado sem plano de invalidar sessões existentes.
+Depois de aplicar as migrations, crie o primeiro owner interativamente com `cd backend && set -a && . ./.env && set +a && go run ./cmd/create-admin`. A senha é lida sem eco, precisa ter de 12 a 72 bytes e é armazenada com bcrypt. O comando recusa criar outro owner. A API oferece login/logout, sessões revogáveis, redefinição de senha de uso único e convites de 24 horas. Configure `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_FROM` e `LYNX_PUBLIC_URL` para entregar e-mails de redefinição; sem Mailgun, a rota mantém resposta genérica, mas não consegue enviar o link. Somente o owner pode convidar e alterar administradores. Os papéis `admin`, `operator` e `viewer` têm permissões distintas para integrações. O JWT secret nunca deve ser rotacionado sem plano de invalidar sessões existentes.
+
+O owner pode gerar um código Telegram de uso único, válido por 10 minutos, em `POST /api/v1/auth/telegram/link-code`. O vínculo só é concluído quando um bot consome esse código usando o ID numérico da conta Telegram; os códigos expiram e somente seus hashes são persistidos. A migração do processo atual do bot para dentro deste servidor Go ainda é uma etapa separada.
 
 ## Cadastro e revogação de integrações
 

@@ -25,6 +25,13 @@ var (
 	ErrUserNotFound           = errors.New("administrator not found")
 	ErrTooManyAttempts        = errors.New("too many login attempts")
 	ErrRateLimiterUnavailable = errors.New("login rate limiter unavailable")
+	ErrInvalidOneTimeToken    = errors.New("one-time token is invalid or expired")
+	ErrEmailAlreadyUsed       = errors.New("email is already in use")
+	ErrInvalidRole            = errors.New("administrator role is invalid")
+	ErrCannotModifyOwner      = errors.New("owner account cannot be modified")
+	ErrCannotDeactivateSelf   = errors.New("current account cannot be deactivated here")
+	ErrMailerUnavailable      = errors.New("email delivery is unavailable")
+	ErrTelegramAlreadyLinked  = errors.New("telegram identity is already linked")
 )
 
 type User struct {
@@ -51,6 +58,27 @@ type Session struct {
 	UserAgent        string
 }
 
+type AdminSummary struct {
+	ID          string     `json:"id"`
+	Email       string     `json:"email"`
+	DisplayName string     `json:"displayName"`
+	Role        Role       `json:"role"`
+	Active      bool       `json:"active"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	LastLoginAt *time.Time `json:"lastLoginAt"`
+}
+
+type Invitation struct {
+	ID          string
+	Email       string
+	DisplayName string
+	Role        Role
+	TokenHash   string
+	InvitedBy   string
+	ExpiresAt   time.Time
+	CreatedAt   time.Time
+}
+
 type Repository interface {
 	CreateInitialOwner(context.Context, User) error
 	FindByEmail(context.Context, string) (User, error)
@@ -63,6 +91,18 @@ type Repository interface {
 	RevokeSessionByRefreshHash(context.Context, string) error
 	RevokeAllSessions(context.Context, string) error
 	ListSessions(context.Context, string) ([]Session, error)
+	CreatePasswordResetToken(context.Context, string, string, time.Time) error
+	CompletePasswordReset(context.Context, string, string) error
+	CreateInvitation(context.Context, Invitation) error
+	AcceptInvitation(context.Context, string, string) (User, error)
+	ListAdmins(context.Context) ([]AdminSummary, error)
+	UpdateAdmin(context.Context, string, string, Role, bool) (AdminSummary, error)
+	CreateTelegramLinkCode(context.Context, string, string, string, time.Time) error
+	ConsumeTelegramLinkCode(context.Context, string, string) error
+}
+
+type PasswordResetMailer interface {
+	SendPasswordReset(context.Context, string, string, time.Time) error
 }
 
 type LoginRateLimiter interface {

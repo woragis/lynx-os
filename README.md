@@ -10,11 +10,13 @@ Central de operações da Lynx para integrar os SaaS e provisionar uma empresa, 
 
 O primeiro owner é criado interativamente pelo comando Go `go run ./cmd/create-admin`; a senha não fica em `.env`. `.env` é ignorado pelo Git.
 
+Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir a própria senha e vincular o Telegram com um código de 8 dígitos válido por 10 minutos. O owner também tem a página **Equipe** para convidar administradores com papéis limitados, alterar papéis e desativar contas. Convites expiram em 24 horas; redefinição depende da configuração Mailgun no backend. Tokens de sessão e de uso único são armazenados como hashes no PostgreSQL.
+
 ## Telegram
 
 O transporte do bot roda em um serviço dedicado em Go, em `telegram-bot/`. Ele valida o webhook do Telegram, encaminha a atualização ao endpoint interno autenticado do Next.js e envia a resposta ao chat. O Next.js segue responsável por OpenAI, conversas, allowlist e provisionamento.
 
-Configure `TELEGRAM_BOT_TOKEN`, `LYNX_TELEGRAM_INTERNAL_TOKEN`, `LYNX_OS_INTERNAL_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Gere o token interno com pelo menos 32 caracteres aleatórios; o mesmo valor precisa estar no Next.js e no processo Go. Em desenvolvimento, inicie o bot com `npm run telegram:dev`. O serviço usa long polling, então não precisa de domínio ou webhook público. O bot só aceita mensagens privadas de IDs presentes na allowlist. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
+Configure `TELEGRAM_BOT_TOKEN`, `LYNX_TELEGRAM_INTERNAL_TOKEN`, `LYNX_OS_INTERNAL_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Gere o token interno com pelo menos 32 caracteres aleatórios; para o vínculo de identidade, use o mesmo valor no Next.js e em `backend/.env`. Em desenvolvimento, inicie o bot com `npm run telegram:dev`. O serviço usa long polling, então não precisa de domínio ou webhook público. O bot só aceita mensagens privadas de IDs presentes na allowlist, exceto `/link CÓDIGO`, que consome um código de uso único emitido pelo Lynx OS. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
 
 O fluxo e as opções de execução do processo estão em [`telegram-bot/README.md`](telegram-bot/README.md). Em produção, publique o serviço Go atrás do HTTPS do domínio e mantenha o endpoint Next.js interno na rede privada.
 
@@ -24,7 +26,7 @@ O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A a
 
 O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). A autenticação administrativa e gestão de integrações já usam Go, PostgreSQL e Redis. Parte das ações e leituras de produto ainda usa Next/Prisma e será migrada em etapas.
 
-Para subir PostgreSQL e Redis, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` e `000002` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
+Para subir PostgreSQL e Redis, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001`, `000002` e `000003` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Para recuperação de senha, configure Mailgun no `.env` do backend. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
 
 ## Integrações
 

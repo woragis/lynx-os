@@ -79,14 +79,93 @@ func TestRefreshRotationRevokesPreviousAccessSession(t *testing.T) {
 	}
 }
 
+func TestPasswordResetUsesHiddenSingleUseTokenAndDoesNotEnumerateAccounts(t *testing.T) {
+	repository := newFakeRepository()
+	mailer := &fakeResetMailer{}
+	service := newTestServiceWithMailer(t, repository, &fakeLimiter{}, mailer)
+
+	if err := service.RequestPasswordReset(context.Background(), "missing@lynx.test", "127.0.0.1"); err != nil {
+		t.Fatalf("unknown account should get the same generic success: %v", err)
+	}
+	if mailer.calls != 0 {
+		t.Fatal("unknown account must not receive a reset email")
+	}
+	repository.usersByEmail["owner@lynx.test"] = domain.User{ID: "user-1", Email: "owner@lynx.test", Active: true}
+	if err := service.RequestPasswordReset(context.Background(), "OWNER@LYNX.TEST", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if mailer.calls != 1 || len(mailer.token) < 40 || repository.resetTokenHash == mailer.token || repository.resetTokenHash == "" {
+		t.Fatal("reset must email a random token while persisting only its hash")
+	}
+	if err := service.ResetPassword(context.Background(), mailer.token, "a-new-secure-password"); err != nil {
+		t.Fatal(err)
+	}
+	if repository.resetCompletedHash == "" || repository.resetCompletedHash == mailer.token {
+		t.Fatal("password reset must pass only the token hash to persistence")
+	}
+}
+
+func TestInvitationAndTelegramLinkTokensAreShortLivedAndStoredHashed(t *testing.T) {
+	repository := newFakeRepository()
+	service := newTestService(t, repository, &fakeLimiter{})
+
+	if _, err := service.Invite(context.Background(), "owner-1", "new@lynx.test", "Nova Pessoa", domain.RoleOwner); !errors.Is(err, domain.ErrInvalidRole) {
+		t.Fatalf("owner role must not be assignable by invitation: %v", err)
+	}
+	token, err := service.Invite(context.Background(), "owner-1", "new@lynx.test", "Nova Pessoa", domain.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) < 40 || repository.invitation.TokenHash == token || repository.invitation.Role != domain.RoleOperator {
+		t.Fatal("invitation should persist only a hash and restrict the role")
+	}
+	code, err := service.CreateTelegramLinkCode(context.Background(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(code) != 8 || repository.telegramCodeHash == code {
+		t.Fatal("Telegram link code must be short-lived and persisted as a hash")
+	}
+	if err := service.LinkTelegramIdentity(context.Background(), "876916572", code); err != nil {
+		t.Fatalf("valid Telegram code should be consumed: %v", err)
+	}
+	if repository.telegramLinkedUserID != "876916572" {
+		t.Fatal("Telegram identity should be linked to the numeric Telegram user ID")
+	}
+}
+
+func TestOwnerCannotDeactivateTheirOwnAccountThroughAdminUpdate(t *testing.T) {
+	repository := newFakeRepository()
+	service := newTestService(t, repository, &fakeLimiter{})
+	_, err := service.UpdateAdmin(context.Background(), "owner-1", "owner-1", "Owner", domain.RoleAdmin, false)
+	if !errors.Is(err, domain.ErrCannotDeactivateSelf) {
+		t.Fatalf("expected self-deactivation to be rejected, got %v", err)
+	}
+}
+
 func newTestService(t *testing.T, repository *fakeRepository, limiter *fakeLimiter) *Service {
+	return newTestServiceWithMailer(t, repository, limiter, nil)
+}
+
+func newTestServiceWithMailer(t *testing.T, repository *fakeRepository, limiter *fakeLimiter, mailer domain.PasswordResetMailer) *Service {
 	t.Helper()
-	service, err := NewService(repository, limiter, fakeTokens{repository: repository})
+	service, err := NewService(repository, limiter, fakeTokens{repository: repository}, mailer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service.now = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	return service
+}
+
+type fakeResetMailer struct {
+	calls int
+	token string
+}
+
+func (m *fakeResetMailer) SendPasswordReset(_ context.Context, _ string, token string, _ time.Time) error {
+	m.calls++
+	m.token = token
+	return nil
 }
 
 type fakeLimiter struct{ blocked bool }
@@ -112,9 +191,14 @@ func (t fakeTokens) Verify(value string) (domain.AccessClaims, error) {
 }
 
 type fakeRepository struct {
-	usersByEmail map[string]domain.User
-	sessions     map[string]domain.Session
-	byHash       map[string]string
+	usersByEmail         map[string]domain.User
+	sessions             map[string]domain.Session
+	byHash               map[string]string
+	resetTokenHash       string
+	resetCompletedHash   string
+	invitation           domain.Invitation
+	telegramCodeHash     string
+	telegramLinkedUserID string
 }
 
 func newFakeRepository() *fakeRepository {
@@ -197,4 +281,39 @@ func (r *fakeRepository) RevokeAllSessions(_ context.Context, userID string) err
 }
 func (r *fakeRepository) ListSessions(context.Context, string) ([]domain.Session, error) {
 	return nil, nil
+}
+func (r *fakeRepository) CreatePasswordResetToken(_ context.Context, _, tokenHash string, _ time.Time) error {
+	r.resetTokenHash = tokenHash
+	return nil
+}
+func (r *fakeRepository) CompletePasswordReset(_ context.Context, tokenHash, _ string) error {
+	r.resetCompletedHash = tokenHash
+	return nil
+}
+func (r *fakeRepository) CreateInvitation(_ context.Context, invitation domain.Invitation) error {
+	r.invitation = invitation
+	return nil
+}
+func (r *fakeRepository) AcceptInvitation(_ context.Context, tokenHash, passwordHash string) (domain.User, error) {
+	if tokenHash != r.invitation.TokenHash {
+		return domain.User{}, domain.ErrInvalidOneTimeToken
+	}
+	return domain.User{ID: "new-user", Email: r.invitation.Email, PasswordHash: passwordHash, DisplayName: r.invitation.DisplayName, Role: r.invitation.Role, Active: true}, nil
+}
+func (r *fakeRepository) ListAdmins(context.Context) ([]domain.AdminSummary, error) {
+	return nil, nil
+}
+func (r *fakeRepository) UpdateAdmin(context.Context, string, string, domain.Role, bool) (domain.AdminSummary, error) {
+	return domain.AdminSummary{}, nil
+}
+func (r *fakeRepository) CreateTelegramLinkCode(_ context.Context, _, _, tokenHash string, _ time.Time) error {
+	r.telegramCodeHash = tokenHash
+	return nil
+}
+func (r *fakeRepository) ConsumeTelegramLinkCode(_ context.Context, codeHash, telegramUserID string) error {
+	if codeHash != r.telegramCodeHash {
+		return domain.ErrInvalidOneTimeToken
+	}
+	r.telegramLinkedUserID = telegramUserID
+	return nil
 }

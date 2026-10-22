@@ -16,7 +16,9 @@ import (
 	identityapp "github.com/lynx/lynx-os/backend/internal/application/identity"
 	integrationapp "github.com/lynx/lynx-os/backend/internal/application/integration"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/health"
+	identitydomain "github.com/lynx/lynx-os/backend/internal/domain/identity"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/cryptox"
+	"github.com/lynx/lynx-os/backend/internal/infrastructure/mailgun"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/postgres"
 	redisinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/redis"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/saasclient"
@@ -69,12 +71,21 @@ func main() {
 			logger.Error("LYNX_JWT_SIGNING_KEY must contain at least 32 characters")
 			os.Exit(1)
 		}
-		identityService, serviceErr := identityapp.NewService(postgres.NewIdentityRepository(db), redisinfra.NewLoginRateLimiter(redis), jwtManager)
+		var resetMailer identitydomain.PasswordResetMailer
+		mailConfigured := cfg.MailgunAPIKey != "" || cfg.MailgunDomain != "" || cfg.MailgunFrom != "" || cfg.PublicURL != ""
+		if mailConfigured {
+			resetMailer, err = mailgun.NewPasswordResetMailer(cfg.MailgunAPIKey, cfg.MailgunDomain, cfg.MailgunFrom, cfg.PublicURL)
+			if err != nil {
+				logger.Error("Mailgun password recovery configuration is invalid")
+				os.Exit(1)
+			}
+		}
+		identityService, serviceErr := identityapp.NewService(postgres.NewIdentityRepository(db), redisinfra.NewLoginRateLimiter(redis), jwtManager, resetMailer)
 		if serviceErr != nil {
 			logger.Error("could not initialize administrator authentication")
 			os.Exit(1)
 		}
-		identityHandler = identityhttp.NewHandler(identityService, cfg.Environment == "production")
+		identityHandler = identityhttp.NewHandlerWithTelegram(identityService, cfg.Environment == "production", cfg.TelegramInternalToken)
 		router.Mount("/api/v1/auth", identityHandler.Routes())
 	}
 	if cfg.EncryptionKey != "" {

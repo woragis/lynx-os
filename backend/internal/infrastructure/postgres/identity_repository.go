@@ -2,10 +2,13 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/identity"
 )
@@ -162,4 +165,238 @@ func (r *IdentityRepository) ListSessions(ctx context.Context, userID string) ([
 		sessions = append(sessions, session)
 	}
 	return sessions, rows.Err()
+}
+
+func (r *IdentityRepository) CreatePasswordResetToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE admin_password_reset_tokens SET used_at=now() WHERE user_id=$1 AND used_at IS NULL`, userID); err != nil {
+		return err
+	}
+	id, err := randomTextID()
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO admin_password_reset_tokens (id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,$4)`, id, userID, tokenHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) CompletePasswordReset(ctx context.Context, tokenHash, passwordHash string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var tokenID, userID string
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx, `SELECT id,user_id,expires_at FROM admin_password_reset_tokens WHERE token_hash=$1 AND used_at IS NULL FOR UPDATE`, tokenHash).Scan(&tokenID, &userID, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !expiresAt.After(time.Now())) {
+		return domain.ErrInvalidOneTimeToken
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE admin_password_reset_tokens SET used_at=now() WHERE id=$1`, tokenID); err != nil {
+		return err
+	}
+	result, err := tx.Exec(ctx, `UPDATE admin_users SET password_hash=$2,updated_at=now() WHERE id=$1 AND active=true`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return domain.ErrInvalidOneTimeToken
+	}
+	if _, err := tx.Exec(ctx, `UPDATE admin_password_reset_tokens SET used_at=COALESCE(used_at,now()) WHERE user_id=$1`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE admin_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) CreateInvitation(ctx context.Context, invitation domain.Invitation) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 913570130))`, invitation.Email); err != nil {
+		return err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM admin_users WHERE lower(email)=lower($1))`, invitation.Email).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return domain.ErrEmailAlreadyUsed
+	}
+	if _, err := tx.Exec(ctx, `UPDATE admin_invitations SET accepted_at=now() WHERE lower(email)=lower($1) AND accepted_at IS NULL`, invitation.Email); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO admin_invitations (id,email,display_name,role,token_hash,invited_by,expires_at,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		invitation.ID, invitation.Email, invitation.DisplayName, invitation.Role, invitation.TokenHash, invitation.InvitedBy, invitation.ExpiresAt, invitation.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) AcceptInvitation(ctx context.Context, tokenHash, passwordHash string) (domain.User, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback(ctx)
+	var invitation domain.Invitation
+	err = tx.QueryRow(ctx, `SELECT id,email,display_name,role,expires_at FROM admin_invitations WHERE token_hash=$1 AND accepted_at IS NULL FOR UPDATE`, tokenHash).
+		Scan(&invitation.ID, &invitation.Email, &invitation.DisplayName, &invitation.Role, &invitation.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !invitation.ExpiresAt.After(time.Now())) {
+		return domain.User{}, domain.ErrInvalidOneTimeToken
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	now := time.Now().UTC()
+	userID, err := randomTextID()
+	if err != nil {
+		return domain.User{}, err
+	}
+	user := domain.User{ID: userID, Email: invitation.Email, PasswordHash: passwordHash, DisplayName: invitation.DisplayName, Role: invitation.Role, Active: true, CreatedAt: now}
+	_, err = tx.Exec(ctx, `INSERT INTO admin_users (id,email,password_hash,display_name,role,active,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,true,$6,$6)`,
+		user.ID, user.Email, user.PasswordHash, user.DisplayName, user.Role, user.CreatedAt)
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) && pgError.Code == "23505" {
+		return domain.User{}, domain.ErrEmailAlreadyUsed
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE admin_invitations SET accepted_at=now() WHERE id=$1`, invitation.ID); err != nil {
+		return domain.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, err
+	}
+	return user, nil
+}
+
+func (r *IdentityRepository) ListAdmins(ctx context.Context) ([]domain.AdminSummary, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id,email,display_name,role,active,created_at,last_login_at FROM admin_users ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := make([]domain.AdminSummary, 0)
+	for rows.Next() {
+		var user domain.AdminSummary
+		if err := rows.Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.Active, &user.CreatedAt, &user.LastLoginAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (r *IdentityRepository) UpdateAdmin(ctx context.Context, id, displayName string, role domain.Role, active bool) (domain.AdminSummary, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.AdminSummary{}, err
+	}
+	defer tx.Rollback(ctx)
+	var currentRole domain.Role
+	err = tx.QueryRow(ctx, `SELECT role FROM admin_users WHERE id=$1 FOR UPDATE`, id).Scan(&currentRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminSummary{}, domain.ErrUserNotFound
+	}
+	if err != nil {
+		return domain.AdminSummary{}, err
+	}
+	if currentRole == domain.RoleOwner {
+		return domain.AdminSummary{}, domain.ErrCannotModifyOwner
+	}
+	var user domain.AdminSummary
+	err = tx.QueryRow(ctx, `UPDATE admin_users SET display_name=$2,role=$3,active=$4,updated_at=now() WHERE id=$1 RETURNING id,email,display_name,role,active,created_at,last_login_at`, id, displayName, role, active).
+		Scan(&user.ID, &user.Email, &user.DisplayName, &user.Role, &user.Active, &user.CreatedAt, &user.LastLoginAt)
+	if err != nil {
+		return domain.AdminSummary{}, err
+	}
+	if !active {
+		if _, err := tx.Exec(ctx, `UPDATE admin_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1 AND revoked_at IS NULL`, id); err != nil {
+			return domain.AdminSummary{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.AdminSummary{}, err
+	}
+	return user, nil
+}
+
+func (r *IdentityRepository) CreateTelegramLinkCode(ctx context.Context, id, userID, tokenHash string, expiresAt time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var active bool
+	if err := tx.QueryRow(ctx, `SELECT active FROM admin_users WHERE id=$1`, userID).Scan(&active); errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrUserNotFound
+	} else if err != nil {
+		return err
+	} else if !active {
+		return domain.ErrUserInactive
+	}
+	if _, err := tx.Exec(ctx, `UPDATE telegram_link_codes SET used_at=now() WHERE user_id=$1 AND used_at IS NULL`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO telegram_link_codes (id,user_id,token_hash,expires_at) VALUES ($1,$2,$3,$4)`, id, userID, tokenHash, expiresAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IdentityRepository) ConsumeTelegramLinkCode(ctx context.Context, tokenHash, telegramUserID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var codeID, userID string
+	err = tx.QueryRow(ctx, `SELECT c.id,c.user_id FROM telegram_link_codes c JOIN admin_users u ON u.id=c.user_id WHERE c.token_hash=$1 AND c.used_at IS NULL AND c.expires_at>now() AND u.active=true FOR UPDATE OF c`, tokenHash).Scan(&codeID, &userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrInvalidOneTimeToken
+	}
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO telegram_identities (id,user_id,telegram_user_id,linked_at,last_seen_at)
+		VALUES ($1,$2,$3,$4,$4)
+		ON CONFLICT (user_id) DO UPDATE SET telegram_user_id=EXCLUDED.telegram_user_id,linked_at=EXCLUDED.linked_at,last_seen_at=EXCLUDED.last_seen_at`, codeID, userID, telegramUserID, now)
+	var pgError *pgconn.PgError
+	if errors.As(err, &pgError) && pgError.Code == "23505" {
+		return domain.ErrTelegramAlreadyLinked
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE telegram_link_codes SET used_at=now() WHERE id=$1`, codeID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func randomTextID() (string, error) {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }

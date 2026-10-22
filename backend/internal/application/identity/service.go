@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ type Service struct {
 	repository domain.Repository
 	rateLimit  domain.LoginRateLimiter
 	tokens     domain.AccessTokenManager
+	mailer     domain.PasswordResetMailer
 	now        func() time.Time
 	dummyHash  []byte
 }
@@ -43,7 +45,7 @@ type Tokens struct {
 	Session      domain.Session
 }
 
-func NewService(repository domain.Repository, rateLimit domain.LoginRateLimiter, tokens domain.AccessTokenManager) (*Service, error) {
+func NewService(repository domain.Repository, rateLimit domain.LoginRateLimiter, tokens domain.AccessTokenManager, mailer domain.PasswordResetMailer) (*Service, error) {
 	if tokens == nil {
 		return nil, errors.New("access token manager is required")
 	}
@@ -54,7 +56,7 @@ func NewService(repository domain.Repository, rateLimit domain.LoginRateLimiter,
 	if rateLimit == nil {
 		return nil, errors.New("login rate limiter is required")
 	}
-	return &Service{repository: repository, rateLimit: rateLimit, tokens: tokens, now: time.Now, dummyHash: dummyHash}, nil
+	return &Service{repository: repository, rateLimit: rateLimit, tokens: tokens, mailer: mailer, now: time.Now, dummyHash: dummyHash}, nil
 }
 
 func CreateInitialOwner(ctx context.Context, repository domain.Repository, email, password, displayName string) error {
@@ -184,6 +186,135 @@ func (s *Service) Sessions(ctx context.Context, userID string) ([]domain.Session
 	return s.repository.ListSessions(ctx, userID)
 }
 
+func (s *Service) RequestPasswordReset(ctx context.Context, email, ipAddress string) error {
+	for _, key := range passwordResetRateKeys(email, ipAddress) {
+		allowed, err := s.rateLimit.Allow(ctx, key)
+		if err != nil {
+			return domain.ErrRateLimiterUnavailable
+		}
+		if !allowed {
+			return nil
+		}
+	}
+	for _, key := range passwordResetRateKeys(email, ipAddress) {
+		if err := s.rateLimit.RecordFailure(ctx, key); err != nil {
+			return domain.ErrRateLimiterUnavailable
+		}
+	}
+	user, err := s.repository.FindByEmail(ctx, normalizeEmail(email))
+	if errors.Is(err, domain.ErrUserNotFound) || (err == nil && !user.Active) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if s.mailer == nil {
+		return domain.ErrMailerUnavailable
+	}
+	token, err := randomToken()
+	if err != nil {
+		return err
+	}
+	expiresAt := s.now().UTC().Add(15 * time.Minute)
+	if err := s.repository.CreatePasswordResetToken(ctx, user.ID, hashToken(token), expiresAt); err != nil {
+		return err
+	}
+	return s.mailer.SendPasswordReset(ctx, user.Email, token, expiresAt)
+}
+
+func (s *Service) ResetPassword(ctx context.Context, token, password string) error {
+	if len(token) < 40 || len(token) > 256 || !validPassword(password) {
+		return domain.ErrInvalidOneTimeToken
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.repository.CompletePasswordReset(ctx, hashToken(token), string(hash))
+}
+
+func (s *Service) Invite(ctx context.Context, actorID, email, displayName string, role domain.Role) (string, error) {
+	email = normalizeEmail(email)
+	displayName = strings.TrimSpace(displayName)
+	if !validEmail(email) || displayName == "" || len(displayName) > 120 {
+		return "", ErrInvalidAccount
+	}
+	if role != domain.RoleAdmin && role != domain.RoleOperator && role != domain.RoleViewer {
+		return "", domain.ErrInvalidRole
+	}
+	token, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	now := s.now().UTC()
+	err = s.repository.CreateInvitation(ctx, domain.Invitation{
+		ID: id, Email: email, DisplayName: displayName, Role: role,
+		TokenHash: hashToken(token), InvitedBy: actorID,
+		ExpiresAt: now.Add(24 * time.Hour), CreatedAt: now,
+	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *Service) AcceptInvitation(ctx context.Context, token, password string) error {
+	if len(token) < 40 || len(token) > 256 || !validPassword(password) {
+		return domain.ErrInvalidOneTimeToken
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = s.repository.AcceptInvitation(ctx, hashToken(token), string(hash))
+	return err
+}
+
+func (s *Service) Admins(ctx context.Context) ([]domain.AdminSummary, error) {
+	return s.repository.ListAdmins(ctx)
+}
+
+func (s *Service) UpdateAdmin(ctx context.Context, actorID, targetID, displayName string, role domain.Role, active bool) (domain.AdminSummary, error) {
+	if actorID == targetID && !active {
+		return domain.AdminSummary{}, domain.ErrCannotDeactivateSelf
+	}
+	if role != domain.RoleAdmin && role != domain.RoleOperator && role != domain.RoleViewer {
+		return domain.AdminSummary{}, domain.ErrInvalidRole
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" || len(displayName) > 120 {
+		return domain.AdminSummary{}, ErrInvalidAccount
+	}
+	return s.repository.UpdateAdmin(ctx, targetID, displayName, role, active)
+}
+
+func (s *Service) CreateTelegramLinkCode(ctx context.Context, userID string) (string, error) {
+	value := make([]byte, 4)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	code := fmt.Sprintf("%08d", binary.BigEndian.Uint32(value)%100_000_000)
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	if err := s.repository.CreateTelegramLinkCode(ctx, id, userID, hashToken(code), s.now().UTC().Add(10*time.Minute)); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+func (s *Service) LinkTelegramIdentity(ctx context.Context, telegramUserID, code string) error {
+	if len(telegramUserID) == 0 || len(telegramUserID) > 32 || len(code) != 8 {
+		return domain.ErrInvalidOneTimeToken
+	}
+	return s.repository.ConsumeTelegramLinkCode(ctx, hashToken(code), telegramUserID)
+}
+
 func (s *Service) newSession(userID, familyID, ipAddress, userAgent string, now time.Time) (domain.Session, string, error) {
 	id, err := randomID()
 	if err != nil {
@@ -224,12 +355,25 @@ func loginRateKey(ipAddress, email string) string {
 	hash := sha256.Sum256([]byte(value))
 	return "lynx:auth:login:" + hex.EncodeToString(hash[:])
 }
+func passwordResetRateKeys(email, ipAddress string) []string {
+	return []string{
+		"lynx:auth:reset:ip:" + hashToken(strings.TrimSpace(ipAddress)),
+		"lynx:auth:reset:email:" + hashToken(normalizeEmail(email)),
+	}
+}
 func randomID() (string, error) {
 	value := make([]byte, 16)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+func randomToken() (string, error) {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 func trimBounded(value string, max int) string {
 	value = strings.TrimSpace(value)

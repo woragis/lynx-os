@@ -110,11 +110,33 @@ export async function processTelegramUpdate(input: unknown): Promise<string | nu
   const fromId = message?.from?.id;
   const chatId = message?.chat?.id;
   if (!text || !fromId || !chatId || message?.chat?.type !== "private") return null;
+
+  const linkMatch = text.match(/^\/link(?:@\w+)?\s+(\d{8})$/i);
+  if (linkMatch) {
+    const baseURL = process.env.LYNX_GO_INTERNAL_URL || process.env.LYNX_GO_API_URL;
+    const internalToken = process.env.LYNX_TELEGRAM_INTERNAL_TOKEN;
+    if (!baseURL || !internalToken) return "O vínculo Telegram não está configurado no backend.";
+    try {
+      const response = await fetch(`${baseURL.replace(/\/$/, "")}/api/v1/auth/telegram/link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${internalToken}` },
+        body: JSON.stringify({ telegramUserId: String(fromId), code: linkMatch[1] }),
+        signal: AbortSignal.timeout(5_000),
+        cache: "no-store",
+      });
+      if (response.ok) return "Conta Telegram vinculada com sucesso.";
+      if (response.status === 409) return "Esta conta Telegram já está vinculada a outro administrador.";
+      return "Código inválido ou expirado. Gere um novo código na área de segurança do Lynx OS.";
+    } catch {
+      return "Não consegui falar com o backend agora. Tente novamente em instantes.";
+    }
+  }
+
   const allowedIds = (process.env.TELEGRAM_ALLOWED_USER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
   if (!allowedIds.includes(String(fromId))) return null;
 
   if (text === "/start") {
-    return "Lynx OS pronto. Descreva o sistema e os dados do escritório, do cliente e da pessoa que terá acesso. Vou revisar tudo com você antes de cadastrar.\n\nUse /cancelar para apagar o rascunho.";
+    return "Lynx OS pronto. Descreva o sistema e os dados do escritório, do cliente e da pessoa que terá acesso. Vou revisar tudo com você antes de cadastrar.\n\nUse /link CÓDIGO para vincular sua conta Lynx OS, ou /cancelar para apagar o rascunho.";
   }
   if (text.toLocaleLowerCase("pt-BR") === "/cancelar" || text.toLocaleLowerCase("pt-BR") === "cancelar") {
     await db.telegramConversation.deleteMany({ where: { chatId: String(chatId) } });

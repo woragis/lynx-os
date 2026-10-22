@@ -8,6 +8,15 @@ const nextConfig: NextConfig = {
     if (!apiOrigin) return [];
     return [{ source: "/api/v1/:path*", destination: `${apiOrigin.replace(/\/$/, "")}/api/v1/:path*` }];
   },
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+      ],
+    }];
+  },
   turbopack: {
     rules: {
       "*.css": {
