@@ -13,7 +13,7 @@ cd backend && set -a && . ./.env && set +a && go run ./cmd/http
 - `GET /health/live`: processo HTTP ativo.
 - `GET /health/ready`: verifica PostgreSQL e Redis e responde `503` se qualquer dependência não estiver pronta.
 
-As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. A primeira reproduz o armazenamento atual de integrações, operações, conversas e auditoria; ainda não foi aplicada nem existe rotina de migração do SQLite.
+As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. A primeira reproduz o armazenamento atual de integrações, operações, conversas e auditoria; a segunda adiciona identidade administrativa, sessões revogáveis, tokens de redefinição e vínculos do Telegram. As migrations ainda precisam ser aplicadas no banco de desenvolvimento.
 
 ## Contrato SaaS Lynx v1
 
