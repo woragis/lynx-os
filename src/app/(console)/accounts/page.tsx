@@ -3,7 +3,7 @@ import Link from "next/link";
 import { manageResourceAction, retryResourceAction } from "@/app/actions";
 import { decryptSecret } from "@/lib/server/crypto";
 import { db } from "@/lib/server/db";
-import { discoverV2Capabilities, listV2Resources, type V2Capabilities } from "@/lib/server/provisioning";
+import { discoverCapabilities, listResources, type ContractCapabilities } from "@/lib/server/provisioning";
 
 type SearchParams = Promise<Record<string, string | undefined>>;
 type Resource = Record<string, unknown> & { id: string; resourceType: string; lifecycle?: Record<string, unknown> };
@@ -58,7 +58,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
     : integrations[0]?.id ?? "";
   const resourceType = ["account", "customer", "user"].includes(params.resourceType ?? "") ? params.resourceType! : "account";
   const lifecycle = ["active", "hibernated", "all"].includes(params.lifecycle ?? "") ? params.lifecycle! : "active";
-  let capabilities: V2Capabilities | null = null;
+  let capabilities: ContractCapabilities | null = null;
   let items: Resource[] = [];
   let accounts: Resource[] = [];
   let nextCursor: string | null = null;
@@ -68,16 +68,16 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
 
   if (integrationId) {
     try {
-      capabilities = await discoverV2Capabilities(integrationId);
+      capabilities = await discoverCapabilities(integrationId);
       if (resourceType === "account") {
-        const result = await listV2Resources(integrationId, "account", { lifecycle, search: params.search, cursor: params.cursor });
+        const result = await listResources(integrationId, "account", { lifecycle, search: params.search, cursor: params.cursor });
         items = getItems(result);
         nextCursor = getNextCursor(result);
         accounts = items;
       } else {
         const [accountResult, resourceResult] = await Promise.all([
-          listV2Resources(integrationId, "account", { lifecycle: "all" }),
-          params.accountId ? listV2Resources(integrationId, resourceType, { accountId: params.accountId, lifecycle, search: params.search, cursor: params.cursor }) : Promise.resolve(null),
+          listResources(integrationId, "account", { lifecycle: "all" }),
+          params.accountId ? listResources(integrationId, resourceType, { accountId: params.accountId, lifecycle, search: params.search, cursor: params.cursor }) : Promise.resolve(null),
         ]);
         accounts = getItems(accountResult);
         items = getItems(resourceResult);
@@ -104,7 +104,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
   const selectedAccount = accounts.find((item) => item.id === params.accountId);
   const selectedIntegration = integrations.find((item) => item.id === integrationId);
   const unsupportedReason = !resourceCapabilities
-    ? "Este SaaS ainda não anuncia este tipo de recurso no contrato v2."
+    ? "Este SaaS ainda não anuncia este tipo de recurso no contrato v1."
     : !operations.includes("list")
       ? "Este SaaS ainda não permite listar este tipo de recurso."
       : "";

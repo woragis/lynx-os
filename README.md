@@ -28,7 +28,7 @@ Para subir as dependências locais, execute `docker compose -f backend/compose.y
 
 ## Integrações
 
-Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API key com os escopos mínimos necessários (`provisioning:read`, `provisioning:write`; `provisioning:purge` somente para purga definitiva). O cadastro valida a conexão antes de salvar. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. **Empresas e acessos** negocia o contrato v2 e usa apenas os campos e operações que cada SaaS anuncia; **Novo cadastro** ainda faz o bootstrap v1 de empresa, cliente inicial e usuário owner.
+Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API key com os escopos mínimos necessários (`provisioning:read`, `provisioning:write`; `provisioning:purge` somente para purga definitiva). O cadastro valida a conexão antes de salvar. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. **Empresas e acessos** e **Novo cadastro** usam o mesmo contrato SaaS v1 em `/api/v1/provisioning`; ele anuncia campos e operações disponíveis para cada sistema.
 
 No EasyBill já é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após o prazo. Criação individual de cliente e usuário ainda não está disponível no endpoint EasyBill: até ela ser implementada, use o bootstrap em **Novo cadastro** para criar uma nova empresa com o cliente inicial e o owner.
 

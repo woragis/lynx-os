@@ -77,10 +77,13 @@ async function extractDraft(text: string, previous: Draft | undefined, integrati
 
 function payloadFromDraft(draft: Draft): BootstrapPayload {
   return {
-    contractVersion: "1", operation: "bootstrap",
-    account: { name: draft.accountName!, taxId: draft.accountTaxId!, email: draft.accountEmail!, address: draft.accountAddress! },
-    initialCustomer: { tradeName: draft.customerTradeName!, legalName: draft.customerLegalName ?? "", taxId: draft.customerTaxId!, email: draft.customerEmail ?? "", phone: draft.customerPhone ?? "", taxRegime: draft.customerTaxRegime!, relationshipType: draft.relationshipType!, status: draft.customerStatus! },
-    initialUser: { name: draft.userName!, email: draft.userEmail!, phone: draft.userPhone ?? "", role: "owner", invite: true },
+    contractVersion: "1",
+    operation: "bootstrap",
+    input: {
+      account: { name: draft.accountName!, taxId: draft.accountTaxId!, email: draft.accountEmail!, address: draft.accountAddress! },
+      initialCustomer: { tradeName: draft.customerTradeName!, legalName: draft.customerLegalName ?? "", taxId: draft.customerTaxId!, email: draft.customerEmail ?? "", phone: draft.customerPhone ?? "", taxRegime: draft.customerTaxRegime!, relationshipType: draft.relationshipType!, status: draft.customerStatus! },
+      initialUser: { name: draft.userName!, email: draft.userEmail!, phone: draft.userPhone ?? "" },
+    },
   };
 }
 

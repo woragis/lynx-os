@@ -7,9 +7,11 @@ import { executeProvisioning, type BootstrapPayload } from "@/lib/server/provisi
 
 const payload: BootstrapPayload = {
   contractVersion: "1", operation: "bootstrap",
-  account: { name: "Escritório Aurora", taxId: "12345678000199", email: "admin@aurora.test", address: "Rua das Flores, 10" },
-  initialCustomer: { tradeName: "Cliente Aurora", legalName: "Aurora Ltda", taxId: "98765432000199", email: "cliente@aurora.test", phone: "11999990000", taxRegime: "Simples Nacional", relationshipType: "Recorrente", status: "Ativo" },
-  initialUser: { name: "Ana Aurora", email: "ana@aurora.test", phone: "11988880000", role: "owner", invite: true },
+  input: {
+    account: { name: "Escritório Aurora", taxId: "12345678000199", email: "admin@aurora.test", address: "Rua das Flores, 10" },
+    initialCustomer: { tradeName: "Cliente Aurora", legalName: "Aurora Ltda", taxId: "98765432000199", email: "cliente@aurora.test", phone: "11999990000", taxRegime: "Simples Nacional", relationshipType: "Recorrente", status: "Ativo" },
+    initialUser: { name: "Ana Aurora", email: "ana@aurora.test", phone: "11988880000" },
+  },
 };
 
 let server: Server;
@@ -83,7 +85,7 @@ describe("executeProvisioning com SQLite e SaaS HTTP de teste", () => {
   it("impede reutilizar idempotency key com outro payload", async () => {
     const integration = await createIntegration();
     await executeProvisioning(integration.id, payload, "request-conflict-1");
-    await expect(executeProvisioning(integration.id, { ...payload, account: { ...payload.account, name: "Outro" } }, "request-conflict-1"))
+    await expect(executeProvisioning(integration.id, { ...payload, input: { ...payload.input, account: { ...payload.input.account, name: "Outro" } } }, "request-conflict-1"))
       .rejects.toThrow(/Idempotency-Key já foi usada/);
     expect(postCount).toBe(1);
   });

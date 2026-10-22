@@ -4,13 +4,17 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/server/db";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
-import { discoverV2Capabilities, executeProvisioning, executeV2Operation, type BootstrapPayload, type V2Capabilities } from "@/lib/server/provisioning";
+import { discoverCapabilities, executeProvisioning, executeOperation, type BootstrapPayload, type ContractCapabilities } from "@/lib/server/provisioning";
 
 const BootstrapFormSchema = z.object({
   integrationId: z.string().min(1),
-  account: z.object({ name: z.string().trim().min(1).max(160), taxId: z.string().trim().min(11).max(18), email: z.string().trim().email().max(254), address: z.string().trim().min(1).max(240) }),
-  initialCustomer: z.object({ tradeName: z.string().trim().min(1).max(160), legalName: z.string().trim().max(160), taxId: z.string().trim().min(11).max(18), email: z.union([z.literal(""), z.string().trim().email().max(254)]), phone: z.string().max(20), taxRegime: z.string().trim().min(1).max(120), relationshipType: z.enum(["Recorrente", "Avulso"]), status: z.enum(["Ativo", "Inativo"]) }),
-  initialUser: z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().email().max(254), phone: z.string().max(20) }),
+  contractVersion: z.literal("1"),
+  operation: z.literal("bootstrap"),
+  input: z.object({
+    account: z.object({ name: z.string().trim().min(1).max(160), taxId: z.string().trim().min(11).max(18), email: z.string().trim().email().max(254), address: z.string().trim().min(1).max(240) }),
+    initialCustomer: z.object({ tradeName: z.string().trim().min(1).max(160), legalName: z.string().trim().max(160), taxId: z.string().trim().min(11).max(18), email: z.union([z.literal(""), z.string().trim().email().max(254)]), phone: z.string().max(20), taxRegime: z.string().trim().min(1).max(120), relationshipType: z.enum(["Recorrente", "Avulso"]), status: z.enum(["Ativo", "Inativo"]) }),
+    initialUser: z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().email().max(254), phone: z.string().max(20) }),
+  }),
 });
 import { requireSession, signIn, signOut } from "@/lib/server/session";
 
@@ -55,7 +59,7 @@ export async function addIntegrationAction(formData: FormData) {
     redirect("/integrations?erro=conexao");
   }
   const capabilities = await probe.json().catch(() => null) as { contractVersion?: string } | null;
-  if (!probe.ok || !["1", "2"].includes(capabilities?.contractVersion ?? "")) redirect("/integrations?erro=conexao");
+  if (!probe.ok || capabilities?.contractVersion !== "1") redirect("/integrations?erro=conexao");
   try {
     await db.integration.create({ data: { name, slug, baseUrl, appUrl: appUrl || null, encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag } });
   } catch {
@@ -85,7 +89,7 @@ export async function editIntegrationAction(formData: FormData) {
     const apiKey = decryptSecret(existing.encryptedApiKey, existing.apiKeyIv, existing.apiKeyAuthTag);
     const response = await fetch(`${baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
     const capabilities = await response.json().catch(() => null) as { contractVersion?: string } | null;
-    if (!response.ok || !["1", "2"].includes(capabilities?.contractVersion ?? "")) redirect("/integrations?erro=conexao");
+    if (!response.ok || capabilities?.contractVersion !== "1") redirect("/integrations?erro=conexao");
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     redirect("/integrations?erro=conexao");
@@ -151,15 +155,17 @@ export async function provisionAction(formData: FormData) {
   const payloadCandidate = {
     contractVersion: "1",
     operation: "bootstrap",
-    account: { name: text("accountName"), taxId: text("accountTaxId"), email: text("accountEmail"), address: text("accountAddress") },
-    initialCustomer: { tradeName: text("customerTradeName"), legalName: text("customerLegalName"), taxId: text("customerTaxId"), email: text("customerEmail"), phone: text("customerPhone"), taxRegime: text("customerTaxRegime"), relationshipType: text("relationshipType"), status: text("customerStatus") },
-    initialUser: { name: text("userName"), email: text("userEmail"), phone: text("userPhone"), role: "owner", invite: true },
+    input: {
+      account: { name: text("accountName"), taxId: text("accountTaxId"), email: text("accountEmail"), address: text("accountAddress") },
+      initialCustomer: { tradeName: text("customerTradeName"), legalName: text("customerLegalName"), taxId: text("customerTaxId"), email: text("customerEmail"), phone: text("customerPhone"), taxRegime: text("customerTaxRegime"), relationshipType: text("relationshipType"), status: text("customerStatus") },
+      initialUser: { name: text("userName"), email: text("userEmail"), phone: text("userPhone") },
+    },
   };
   const parsedPayload = BootstrapFormSchema.safeParse({ integrationId, ...payloadCandidate });
   if (!parsedPayload.success) {
     redirect("/provisioning?erro=campos");
   }
-  const payload = { contractVersion: "1", operation: "bootstrap", account: parsedPayload.data.account, initialCustomer: parsedPayload.data.initialCustomer, initialUser: { ...parsedPayload.data.initialUser, role: "owner", invite: true } } as BootstrapPayload;
+  const payload = parsedPayload.data as BootstrapPayload;
   const idempotencyKey = text("idempotencyKey");
   if (!idempotencyKey) redirect("/provisioning?erro=idempotencia");
   try {
@@ -203,8 +209,8 @@ export async function manageResourceAction(formData: FormData) {
   const input: Record<string, unknown> = { resourceType, resourceId };
   if (resourceType !== "account") input.accountId = accountId;
   if (operation === "resource.update") {
-    let capabilities: V2Capabilities;
-    try { capabilities = await discoverV2Capabilities(integrationId); }
+    let capabilities: ContractCapabilities;
+    try { capabilities = await discoverCapabilities(integrationId); }
     catch { redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "integracao" })); }
     const editable = capabilities.resources[resourceType]?.fields?.editable;
     if (!Array.isArray(editable)) redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "campos" }));
@@ -221,7 +227,7 @@ export async function manageResourceAction(formData: FormData) {
     input.changes = changes;
   }
   try {
-    const { status } = await executeV2Operation(integrationId, operation, input, idempotencyKey);
+    const { status } = await executeOperation(integrationId, operation, input, idempotencyKey);
     redirect(resourceLocation({ integrationId, resourceType, accountId, request: idempotencyKey, result: status }));
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
@@ -237,7 +243,7 @@ export async function retryResourceAction(formData: FormData) {
   try {
     const payload = JSON.parse(decryptSecret(record.payloadCiphertext, record.payloadIv, record.payloadAuthTag)) as { operation?: string; input?: Record<string, unknown> };
     if (!payload.operation || !payload.input) redirect("/accounts?erro=solicitacao");
-    await executeV2Operation(record.integrationId, payload.operation, payload.input, idempotencyKey);
+    await executeOperation(record.integrationId, payload.operation, payload.input, idempotencyKey);
     const resourceType = String(payload.input.resourceType ?? "account");
     const accountId = String(payload.input.accountId ?? "");
     redirect(resourceLocation({ integrationId: record.integrationId, resourceType, accountId, request: idempotencyKey }));

@@ -7,9 +7,16 @@ type ProvisioningAccess = { url: string; email: string; invitationState?: string
 type CreatedResource = { id: string; state: string };
 type BootstrapOutcome = { account?: CreatedResource; initialCustomer?: CreatedResource; initialUser?: CreatedResource; invitation?: { state?: string } };
 
+function responseData(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || !("data" in value)) return null;
+  const data = value.data;
+  return data && typeof data === "object" ? data as Record<string, unknown> : null;
+}
+
 function getProvisioningAccess(value: unknown): ProvisioningAccess | null {
-  if (!value || typeof value !== "object" || !("login" in value)) return null;
-  const login = value.login;
+  const data = responseData(value);
+  if (!data || !("login" in data)) return null;
+  const login = data.login;
   if (!login || typeof login !== "object" || !("url" in login) || !("email" in login)) return null;
   if (typeof login.url !== "string" || typeof login.email !== "string") return null;
   try {
@@ -18,7 +25,7 @@ function getProvisioningAccess(value: unknown): ProvisioningAccess | null {
   } catch {
     return null;
   }
-  const invitation = "invitation" in value ? value.invitation : null;
+  const invitation = "invitation" in data ? data.invitation : null;
   const invitationState = invitation && typeof invitation === "object" && "state" in invitation && typeof invitation.state === "string"
     ? invitation.state
     : undefined;
@@ -26,8 +33,8 @@ function getProvisioningAccess(value: unknown): ProvisioningAccess | null {
 }
 
 function getBootstrapOutcome(value: unknown): BootstrapOutcome | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
+  const record = responseData(value);
+  if (!record) return null;
   const resource = (key: string): CreatedResource | undefined => {
     const item = record[key];
     if (!item || typeof item !== "object") return undefined;

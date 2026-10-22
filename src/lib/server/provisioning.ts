@@ -7,9 +7,11 @@ import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
 export type BootstrapPayload = {
   contractVersion: "1";
   operation: "bootstrap";
-  account: { name: string; taxId: string; email: string; address: string };
-  initialCustomer: { tradeName: string; legalName: string; taxId: string; email: string; phone: string; taxRegime: string; relationshipType: string; status: string };
-  initialUser: { name: string; email: string; phone: string; role: "owner"; invite: true };
+  input: {
+    account: { name: string; taxId: string; email: string; address: string };
+    initialCustomer: { tradeName: string; legalName: string; taxId: string; email: string; phone: string; taxRegime: string; relationshipType: string; status: string };
+    initialUser: { name: string; email: string; phone: string };
+  };
 };
 
 export async function executeProvisioning(integrationId: string, payload: BootstrapPayload, idempotencyKey: string) {
@@ -64,9 +66,11 @@ export async function executeProvisioning(integrationId: string, payload: Bootst
   }
 }
 
-export type V2Capabilities = {
-  contractVersion: "2";
+export type ContractCapabilities = {
+  contractVersion: "1";
   service: { name: string; slug: string };
+  operations: Record<string, unknown>;
+  bootstrap?: { supported: boolean; creates: string[] };
   resources: Record<string, {
     operations: string[];
     fields?: Record<string, unknown>;
@@ -84,11 +88,11 @@ async function getIntegrationClient(integrationId: string) {
   return { integration, apiKey, endpoint: `${integration.baseUrl}/api/v1/provisioning` };
 }
 
-export async function discoverV2Capabilities(integrationId: string): Promise<V2Capabilities> {
+export async function discoverCapabilities(integrationId: string): Promise<ContractCapabilities> {
   const { apiKey, endpoint } = await getIntegrationClient(integrationId);
   let response: Response;
   try {
-    response = await fetch(`${endpoint}?contractVersion=2`, {
+    response = await fetch(endpoint, {
       headers: { "X-Lynx-API-Key": apiKey },
       cache: "no-store",
       signal: AbortSignal.timeout(12000),
@@ -98,18 +102,18 @@ export async function discoverV2Capabilities(integrationId: string): Promise<V2C
   }
   if (!response.ok) throw new Error(`O SaaS recusou a consulta de capacidades (HTTP ${response.status}).`);
   const value: unknown = await response.json().catch(() => null);
-  if (!value || typeof value !== "object" || !("contractVersion" in value) || value.contractVersion !== "2" || !("resources" in value)) {
-    throw new Error("Este SaaS não publicou capacidades no contrato v2.");
+  if (!value || typeof value !== "object" || !("contractVersion" in value) || value.contractVersion !== "1" || !("resources" in value)) {
+    throw new Error("Este SaaS não publicou capacidades no contrato v1.");
   }
-  return value as V2Capabilities;
+  return value as ContractCapabilities;
 }
 
-export async function listV2Resources(
+export async function listResources(
   integrationId: string,
   resourceType: string,
   options: { accountId?: string; lifecycle?: string; search?: string; cursor?: string },
 ) {
-  const capabilities = await discoverV2Capabilities(integrationId);
+  const capabilities = await discoverCapabilities(integrationId);
   const resource = capabilities.resources[resourceType];
   if (!resource?.operations.includes("list")) throw new Error(`Este SaaS não permite listar ${resourceType}.`);
   const input: Record<string, unknown> = { resourceType };
@@ -117,10 +121,10 @@ export async function listV2Resources(
   if (options.lifecycle) input.filters = { lifecycle: options.lifecycle };
   if (options.search?.trim()) input.filters = { ...((input.filters as object | undefined) ?? {}), search: options.search.trim() };
   input.page = { limit: 100, ...(options.cursor ? { cursor: options.cursor } : {}) };
-  return executeV2Read(integrationId, { contractVersion: "2", operation: "resource.list", input });
+  return executeRead(integrationId, { contractVersion: "1", operation: "resource.list", input });
 }
 
-async function executeV2Read(integrationId: string, payload: Record<string, unknown>) {
+async function executeRead(integrationId: string, payload: Record<string, unknown>) {
   const { apiKey, endpoint } = await getIntegrationClient(integrationId);
   let response: Response;
   try {
@@ -139,20 +143,20 @@ async function executeV2Read(integrationId: string, payload: Record<string, unkn
   return body;
 }
 
-export async function executeV2Operation(
+export async function executeOperation(
   integrationId: string,
   operation: string,
   input: Record<string, unknown>,
   idempotencyKey: string,
 ) {
-  const capabilities = await discoverV2Capabilities(integrationId);
+  const capabilities = await discoverCapabilities(integrationId);
   const type = typeof input.resourceType === "string" ? input.resourceType : "";
   const resource = capabilities.resources[type];
   const opName = operation.startsWith("resource.") ? operation.slice("resource.".length) : operation;
   if (operation !== "bootstrap" && !resource?.operations.includes(opName)) {
     throw new Error(`A operação ${opName} não está disponível neste SaaS para ${type}.`);
   }
-  const payload = { contractVersion: "2", operation, input };
+  const payload = { contractVersion: "1", operation, input };
   const payloadHash = createHash("sha256").update(stableStringify(payload)).digest("hex");
   let record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
   if (record && (record.integrationId !== integrationId || record.payloadHash !== payloadHash)) {
