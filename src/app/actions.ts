@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/server/db";
 import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
-import { executeProvisioning, type BootstrapPayload } from "@/lib/server/provisioning";
+import { discoverV2Capabilities, executeProvisioning, executeV2Operation, type BootstrapPayload, type V2Capabilities } from "@/lib/server/provisioning";
 
 const BootstrapFormSchema = z.object({
   integrationId: z.string().min(1),
@@ -18,7 +18,7 @@ export async function loginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
   const ok = await signIn(email, password);
-  if (ok) redirect("/provisioning");
+  if (ok) redirect("/accounts");
   redirect("/login?erro=credenciais");
 }
 
@@ -31,21 +31,73 @@ export async function addIntegrationAction(formData: FormData) {
   await requireSession();
   const name = String(formData.get("name") ?? "").trim();
   const baseUrl = String(formData.get("baseUrl") ?? "").trim().replace(/\/$/, "");
+  const appUrl = String(formData.get("appUrl") ?? "").trim().replace(/\/$/, "");
   const apiKey = String(formData.get("apiKey") ?? "").trim();
   if (!name || !apiKey) redirect("/integrations?erro=campos");
   let parsedUrl: URL;
   try { parsedUrl = new URL(baseUrl); } catch { redirect("/integrations?erro=url"); }
   if (parsedUrl.protocol !== "https:" && parsedUrl.hostname !== "localhost") redirect("/integrations?erro=https");
   if (parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) redirect("/integrations?erro=url");
+  let parsedAppUrl: URL | null = null;
+  if (appUrl) {
+    try { parsedAppUrl = new URL(appUrl); } catch { redirect("/integrations?erro=app-url"); }
+    if (parsedAppUrl.protocol !== "https:" && parsedAppUrl.hostname !== "localhost") redirect("/integrations?erro=app-url");
+    if (parsedAppUrl.username || parsedAppUrl.password || parsedAppUrl.search || parsedAppUrl.hash) redirect("/integrations?erro=app-url");
+  }
 
   const slug = name.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const encrypted = encryptSecret(apiKey);
+  let probe: Response;
   try {
-    await db.integration.create({ data: { name, slug, baseUrl, encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag } });
+    probe = await fetch(`${baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error;
+    redirect("/integrations?erro=conexao");
+  }
+  const capabilities = await probe.json().catch(() => null) as { contractVersion?: string } | null;
+  if (!probe.ok || !["1", "2"].includes(capabilities?.contractVersion ?? "")) redirect("/integrations?erro=conexao");
+  try {
+    await db.integration.create({ data: { name, slug, baseUrl, appUrl: appUrl || null, encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag } });
   } catch {
     redirect("/integrations?erro=duplicada");
   }
   redirect("/integrations?salvo=1");
+}
+
+export async function editIntegrationAction(formData: FormData) {
+  await requireSession();
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "").trim();
+  const baseUrl = String(formData.get("baseUrl") ?? "").trim().replace(/\/$/, "");
+  const appUrl = String(formData.get("appUrl") ?? "").trim().replace(/\/$/, "");
+  if (!id || !name || name.length > 120) redirect("/integrations?erro=campos");
+  let apiUrl: URL;
+  try { apiUrl = new URL(baseUrl); } catch { redirect("/integrations?erro=url"); }
+  if ((apiUrl.protocol !== "https:" && apiUrl.hostname !== "localhost") || apiUrl.username || apiUrl.password || apiUrl.search || apiUrl.hash) redirect("/integrations?erro=url");
+  if (appUrl) {
+    let app: URL;
+    try { app = new URL(appUrl); } catch { redirect("/integrations?erro=app-url"); }
+    if ((app.protocol !== "https:" && app.hostname !== "localhost") || app.username || app.password || app.search || app.hash) redirect("/integrations?erro=app-url");
+  }
+  const existing = await db.integration.findUnique({ where: { id } });
+  if (!existing || existing.revokedAt) redirect("/integrations?erro=nao-encontrada");
+  try {
+    const apiKey = decryptSecret(existing.encryptedApiKey, existing.apiKeyIv, existing.apiKeyAuthTag);
+    const response = await fetch(`${baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
+    const capabilities = await response.json().catch(() => null) as { contractVersion?: string } | null;
+    if (!response.ok || !["1", "2"].includes(capabilities?.contractVersion ?? "")) redirect("/integrations?erro=conexao");
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error;
+    redirect("/integrations?erro=conexao");
+  }
+  const slug = name.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  try {
+    await db.integration.update({ where: { id }, data: { name, slug, baseUrl, appUrl: appUrl || null } });
+  } catch {
+    redirect("/integrations?erro=duplicada");
+  }
+  await db.auditLog.create({ data: { action: "integration.update-metadata", integrationId: id, result: "COMPLETED" } });
+  redirect("/integrations?atualizado=1");
 }
 
 export async function toggleIntegrationAction(formData: FormData) {
@@ -132,4 +184,71 @@ export async function retryProvisionAction(formData: FormData) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     redirect(`/provisioning?erro=conexao&request=${encodeURIComponent(idempotencyKey)}`);
   }
+}
+
+export async function manageResourceAction(formData: FormData) {
+  await requireSession();
+  const integrationId = String(formData.get("integrationId") ?? "");
+  const resourceType = String(formData.get("resourceType") ?? "");
+  const accountId = String(formData.get("accountId") ?? "");
+  const resourceId = String(formData.get("resourceId") ?? "");
+  const operation = String(formData.get("operation") ?? "");
+  const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
+  if (!integrationId || !["account", "customer", "user"].includes(resourceType) || !["resource.update", "resource.deactivate", "resource.reactivate", "resource.purge"].includes(operation) || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+    redirect("/accounts?erro=solicitacao");
+  }
+  if (operation === "resource.purge" && String(formData.get("confirmation") ?? "").trim() !== "PURGAR") {
+    redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "confirmacao" }));
+  }
+  const input: Record<string, unknown> = { resourceType, resourceId };
+  if (resourceType !== "account") input.accountId = accountId;
+  if (operation === "resource.update") {
+    let capabilities: V2Capabilities;
+    try { capabilities = await discoverV2Capabilities(integrationId); }
+    catch { redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "integracao" })); }
+    const editable = capabilities.resources[resourceType]?.fields?.editable;
+    if (!Array.isArray(editable)) redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "campos" }));
+    const changes: Record<string, string> = {};
+    for (const [key, value] of formData.entries()) {
+      if (!key.startsWith("change.")) continue;
+      const field = key.slice("change.".length);
+      if (!editable.includes(field) || typeof value !== "string" || value.length > 240) {
+        redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "campos" }));
+      }
+      changes[field] = value.trim();
+    }
+    if (Object.keys(changes).length === 0) redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "campos" }));
+    input.changes = changes;
+  }
+  try {
+    const { status } = await executeV2Operation(integrationId, operation, input, idempotencyKey);
+    redirect(resourceLocation({ integrationId, resourceType, accountId, request: idempotencyKey, result: status }));
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error;
+    redirect(resourceLocation({ integrationId, resourceType, accountId, erro: "integracao" }));
+  }
+}
+
+export async function retryResourceAction(formData: FormData) {
+  await requireSession();
+  const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
+  const record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
+  if (!record || record.status !== "RETRYABLE") redirect("/accounts?erro=solicitacao");
+  try {
+    const payload = JSON.parse(decryptSecret(record.payloadCiphertext, record.payloadIv, record.payloadAuthTag)) as { operation?: string; input?: Record<string, unknown> };
+    if (!payload.operation || !payload.input) redirect("/accounts?erro=solicitacao");
+    await executeV2Operation(record.integrationId, payload.operation, payload.input, idempotencyKey);
+    const resourceType = String(payload.input.resourceType ?? "account");
+    const accountId = String(payload.input.accountId ?? "");
+    redirect(resourceLocation({ integrationId: record.integrationId, resourceType, accountId, request: idempotencyKey }));
+  } catch (error) {
+    if (error && typeof error === "object" && "digest" in error) throw error;
+    redirect("/accounts?erro=integracao");
+  }
+}
+
+function resourceLocation(params: Record<string, string>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
+  return `/accounts?${query.toString()}`;
 }

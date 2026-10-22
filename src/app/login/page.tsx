@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import Image from "next/image";
 import { loginAction } from "@/app/actions";
-import { hasSession } from "@/lib/server/session";
+import { hasSession, isAuthConfigured } from "@/lib/server/session";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ erro?: string }> }) {
-  if (await hasSession()) redirect("/provisioning");
+  if (await hasSession()) redirect("/accounts");
   const { erro } = await searchParams;
+  const authConfigured = isAuthConfigured();
   return <main className="login-screen">
     <section className="login-card">
       <div className="login-brand">
@@ -14,11 +15,12 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       </div>
       <h1>Sua operação<br />precisa de <span>integração.</span></h1>
       <p className="login-description">Conecte processos, cadastre clientes e gerencie seus sistemas em um só lugar.</p>
-      {erro && <p className="error-banner" role="alert">E-mail ou senha inválidos.</p>}
+      {!authConfigured && <p className="error-banner" role="alert">O acesso ainda não foi configurado. Defina LYNX_ADMIN_EMAIL, LYNX_ADMIN_PASSWORD e uma LYNX_SESSION_SECRET com pelo menos 32 caracteres no ambiente do servidor.</p>}
+      {erro && authConfigured && <p className="error-banner" role="alert">E-mail ou senha inválidos.</p>}
       <form action={loginAction} className="stack-form">
-        <label>E-mail<input name="email" type="email" autoComplete="username" required /></label>
-        <label>Senha<input name="password" type="password" autoComplete="current-password" required /></label>
-        <button className="button button-dark" type="submit">Entrar <span aria-hidden>↗</span></button>
+        <label>E-mail<input name="email" type="email" autoComplete="username" required disabled={!authConfigured} /></label>
+        <label>Senha<input name="password" type="password" autoComplete="current-password" required disabled={!authConfigured} /></label>
+        <button className="button button-dark" type="submit" disabled={!authConfigured}>Entrar <span aria-hidden>↗</span></button>
       </form>
       <p className="fine-print">Acesso restrito · sessão protegida por cookie HttpOnly</p>
     </section>

@@ -11,8 +11,8 @@ export default async function ConsoleLayout({ children }: Readonly<{ children: R
       <Link className="brand" href="/provisioning"><Image className="brand-logo" src="/lynx.jpg" alt="" width={38} height={38} /><span>LYNX<span className="brand-light"> / OS</span></span></Link>
       <p className="nav-caption">CENTRAL</p>
       <MainNav />
-      <div className="sidebar-bottom"><div className="status-dot" /> Ambiente seguro <form action={logoutAction}><button className="logout-button">Sair ↗</button></form></div>
+      <div className="sidebar-bottom"><div className="status-dot" /> Ambiente seguro</div>
     </aside>
-    <main className="main-area"><header className="topbar"><div><span className="crumb">LYNX OS</span><span className="crumb-separator">/</span><span>Operações</span></div><div className="user-pill"><span className="avatar">L</span> Administrador</div></header>{children}</main>
+    <main className="main-area"><header className="topbar"><div><span className="crumb">LYNX OS</span><span className="crumb-separator">/</span><span>Operações</span></div><div className="user-pill"><span className="avatar">L</span> Administrador<form action={logoutAction}><button className="topbar-logout">Sair ↗</button></form></div></header>{children}</main>
   </div>;
 }

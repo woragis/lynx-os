@@ -13,6 +13,10 @@ function signature(value: string) {
   return createHmac("sha256", secret).update(value).digest("base64url");
 }
 
+export function isAuthConfigured() {
+  return Boolean(process.env.LYNX_ADMIN_EMAIL && process.env.LYNX_ADMIN_PASSWORD && (process.env.LYNX_SESSION_SECRET?.length ?? 0) >= 32);
+}
+
 function safeEqual(left: string, right: string) {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
@@ -22,7 +26,7 @@ function safeEqual(left: string, right: string) {
 export async function signIn(email: string, password: string) {
   const configuredEmail = process.env.LYNX_ADMIN_EMAIL ?? "";
   const configuredPassword = process.env.LYNX_ADMIN_PASSWORD ?? "";
-  if (!configuredEmail || !configuredPassword) throw new Error("Configure o administrador no ambiente antes do login.");
+  if (!isAuthConfigured()) throw new Error("Configure LYNX_ADMIN_EMAIL, LYNX_ADMIN_PASSWORD e LYNX_SESSION_SECRET antes do login.");
   if (!safeEqual(email.trim().toLowerCase(), configuredEmail.trim().toLowerCase()) || !safeEqual(password, configuredPassword)) {
     return false;
   }
@@ -41,6 +45,7 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function hasSession() {
+  if (!isAuthConfigured()) return false;
   const value = (await cookies()).get(COOKIE_NAME)?.value;
   if (!value) return false;
   const [payload, suppliedSignature] = value.split(".");

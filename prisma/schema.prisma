@@ -12,6 +12,7 @@ model Integration {
   name                String
   slug                String   @unique
   baseUrl             String
+  appUrl              String?
   encryptedApiKey     String
   apiKeyIv            String
   apiKeyAuthTag       String

@@ -5,7 +5,7 @@ test("autentica, cadastra e revoga uma integração", async ({ page }) => {
   await page.getByLabel("E-mail").fill("admin@lynx.test");
   await page.getByLabel("Senha").fill("e2e-password-secure");
   await page.getByRole("button", { name: /Entrar/ }).click();
-  await expect(page).toHaveURL(/\/provisioning$/);
+  await expect(page).toHaveURL(/\/accounts$/);
 
   await page.goto("/integrations");
   await page.getByLabel("Nome do sistema").fill("EasyBill E2E");

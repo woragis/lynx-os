@@ -28,7 +28,9 @@ Para subir as dependências locais, execute `docker compose -f backend/compose.y
 
 ## Integrações
 
-Cadastre no painel o nome e domínio base do SaaS e uma API key com somente os escopos `provisioning:read` e `provisioning:write`. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. O painel consulta `GET /api/v1/provisioning`, confere `contractVersion: "1"` e então chama `POST /api/v1/provisioning` com `Idempotency-Key`.
+Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API key com os escopos mínimos necessários (`provisioning:read`, `provisioning:write`; `provisioning:purge` somente para purga definitiva). O cadastro valida a conexão antes de salvar. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. **Empresas e acessos** negocia o contrato v2 e usa apenas os campos e operações que cada SaaS anuncia; **Novo cadastro** ainda faz o bootstrap v1 de empresa, cliente inicial e usuário owner.
+
+No EasyBill já é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após o prazo. Criação individual de cliente e usuário ainda não está disponível no endpoint EasyBill: até ela ser implementada, use o bootstrap em **Novo cadastro** para criar uma nova empresa com o cliente inicial e o owner.
 
 Por enquanto o banco é SQLite local. Em produção, use um volume persistente e uma única instância da aplicação. As chaves OpenAI, Telegram, sessão e cifragem devem vir do gerenciador de segredos do ambiente de deploy. A rotação de `LYNX_ENCRYPTION_KEY` exige recriptografar os registros antes de descartar a chave antiga.
 

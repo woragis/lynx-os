@@ -1,2 +1,2 @@
 import { redirect } from "next/navigation";
-export default function HomePage() { redirect("/provisioning"); }
+export default function HomePage() { redirect("/accounts"); }
