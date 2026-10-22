@@ -9,7 +9,7 @@ test("autentica, cadastra e revoga uma integração", async ({ page }) => {
 
   await page.goto("/integrations");
   await page.getByLabel("Nome do sistema").fill("EasyBill E2E");
-  await page.getByLabel("URL base").fill("https://easybill.example.test");
+  await page.getByLabel("URL da API").fill("http://localhost:8182");
   await page.getByLabel("API key").fill("e2e-api-key-secret");
   await page.getByRole("button", { name: /Salvar integração/ }).click();
   await expect(page.getByText("Integração salva.")).toBeVisible();
@@ -23,5 +23,20 @@ test("autentica, cadastra e revoga uma integração", async ({ page }) => {
 
 test("bloqueia o painel sem sessão", async ({ page }) => {
   await page.goto("/integrations");
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("mostra e permite revogar a sessão atual", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("E-mail").fill("admin@lynx.test");
+  await page.getByLabel("Senha").fill("e2e-password-secure");
+  await page.getByRole("button", { name: /Entrar/ }).click();
+  await expect(page).toHaveURL(/\/accounts$/);
+
+  await page.goto("/security");
+  await expect(page.getByRole("heading", { name: "Sessões abertas" })).toBeVisible();
+  await expect(page.getByText("Esta sessão")).toBeVisible();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Revogar" }).click();
   await expect(page).toHaveURL(/\/login$/);
 });

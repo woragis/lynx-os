@@ -16,23 +16,10 @@ const BootstrapFormSchema = z.object({
     initialUser: z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().email().max(254), phone: z.string().max(20) }),
   }),
 });
-import { requireSession, signIn, signOut } from "@/lib/server/session";
-
-export async function loginAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const ok = await signIn(email, password);
-  if (ok) redirect("/accounts");
-  redirect("/login?erro=credenciais");
-}
-
-export async function logoutAction() {
-  await signOut();
-  redirect("/login");
-}
+import { requireRoles } from "@/lib/server/session";
 
 export async function addIntegrationAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin"]);
   const name = String(formData.get("name") ?? "").trim();
   const baseUrl = String(formData.get("baseUrl") ?? "").trim().replace(/\/$/, "");
   const appUrl = String(formData.get("appUrl") ?? "").trim().replace(/\/$/, "");
@@ -69,7 +56,7 @@ export async function addIntegrationAction(formData: FormData) {
 }
 
 export async function editIntegrationAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
   const name = String(formData.get("name") ?? "").trim();
   const baseUrl = String(formData.get("baseUrl") ?? "").trim().replace(/\/$/, "");
@@ -105,7 +92,7 @@ export async function editIntegrationAction(formData: FormData) {
 }
 
 export async function toggleIntegrationAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
   const integration = await db.integration.findUnique({ where: { id }, select: { active: true, revokedAt: true } });
   if (!integration) redirect("/integrations?erro=nao-encontrada");
@@ -116,7 +103,7 @@ export async function toggleIntegrationAction(formData: FormData) {
 }
 
 export async function revokeIntegrationAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
   const integration = await db.integration.findUnique({ where: { id }, select: { revokedAt: true } });
   if (!integration) redirect("/integrations?erro=nao-encontrada");
@@ -129,7 +116,7 @@ export async function revokeIntegrationAction(formData: FormData) {
 }
 
 export async function rotateIntegrationKeyAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
   const apiKey = String(formData.get("apiKey") ?? "").trim();
   const integration = await db.integration.findUnique({ where: { id } });
@@ -149,7 +136,7 @@ export async function rotateIntegrationKeyAction(formData: FormData) {
 }
 
 export async function provisionAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin", "operator"]);
   const integrationId = String(formData.get("integrationId") ?? "");
   const text = (name: string) => String(formData.get(name) ?? "").trim();
   const payloadCandidate = {
@@ -178,7 +165,7 @@ export async function provisionAction(formData: FormData) {
 }
 
 export async function retryProvisionAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin", "operator"]);
   const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
   const record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
   if (!record || record.status !== "RETRYABLE") redirect("/provisioning?erro=solicitacao");
@@ -193,7 +180,7 @@ export async function retryProvisionAction(formData: FormData) {
 }
 
 export async function manageResourceAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin", "operator"]);
   const integrationId = String(formData.get("integrationId") ?? "");
   const resourceType = String(formData.get("resourceType") ?? "");
   const accountId = String(formData.get("accountId") ?? "");
@@ -236,7 +223,7 @@ export async function manageResourceAction(formData: FormData) {
 }
 
 export async function retryResourceAction(formData: FormData) {
-  await requireSession();
+  await requireRoles(["owner", "admin", "operator"]);
   const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
   const record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
   if (!record || record.status !== "RETRYABLE") redirect("/accounts?erro=solicitacao");

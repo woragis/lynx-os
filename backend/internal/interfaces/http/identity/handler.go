@@ -184,9 +184,13 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r)
-	if err := h.service.Logout(r.Context(), principal.User.ID, chi.URLParam(r, "sessionID")); err != nil {
+	sessionID := chi.URLParam(r, "sessionID")
+	if err := h.service.Logout(r.Context(), principal.User.ID, sessionID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody("internal_error", "Could not revoke session"))
 		return
+	}
+	if sessionID == principal.Session.ID {
+		h.clearSessionCookies(w)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]string{"status": "revoked"}})
 }
@@ -229,7 +233,7 @@ func (h *Handler) requireCSRF(next http.Handler) http.Handler {
 
 func (h *Handler) validCSRF(r *http.Request) bool {
 	cookie, err := r.Cookie(csrfCookieName)
-	if err != nil {
+	if err != nil || len(cookie.Value) < 40 {
 		return false
 	}
 	provided := r.Header.Get("X-CSRF-Token")

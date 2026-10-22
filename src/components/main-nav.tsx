@@ -9,5 +9,6 @@ export function MainNav() {
     <Link href="/accounts" aria-current={pathname.startsWith("/accounts") ? "page" : undefined}><span className="nav-icon">⌂</span>Empresas e acessos</Link>
     <Link href="/provisioning" aria-current={pathname === "/provisioning" ? "page" : undefined}><span className="nav-icon">＋</span>Novo cadastro</Link>
     <Link href="/integrations" aria-current={pathname === "/integrations" ? "page" : undefined}><span className="nav-icon">◈</span>SaaS e integrações</Link>
+    <Link href="/security" aria-current={pathname === "/security" ? "page" : undefined}><span className="nav-icon">⌑</span>Segurança</Link>
   </nav>;
 }

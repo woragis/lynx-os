@@ -12,7 +12,6 @@ import (
 func NewRouter() chi.Router {
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(35 * time.Second))
 	router.Get("/health/live", func(w http.ResponseWriter, _ *http.Request) {

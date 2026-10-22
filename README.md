@@ -4,11 +4,11 @@ Central de operações da Lynx para integrar os SaaS e provisionar uma empresa, 
 
 ## Desenvolvimento
 
-1. Copie `.env.example` para `.env` e configure as variáveis locais. Gere os segredos com `openssl rand -hex 32` para `LYNX_SESSION_SECRET` e `LYNX_ENCRYPTION_KEY` (a chave de cifragem precisa ter 64 caracteres hexadecimais).
+1. Copie `.env.example` para `.env` e configure `LYNX_GO_API_URL` e `LYNX_GO_INTERNAL_URL` com a origem local do backend Go (`http://localhost:8082`). Gere `LYNX_ENCRYPTION_KEY` com `openssl rand -hex 32` (64 caracteres hexadecimais).
 2. Configure `DATABASE_URL="file:./lynx-os.db"`.
 3. Execute `npm install`, `npm run db:migrate -- --name initial` e `npm run dev`.
 
-O primeiro usuário é configurado por `LYNX_ADMIN_EMAIL` e `LYNX_ADMIN_PASSWORD`. Nunca use os valores de exemplo em produção. `.env` é ignorado pelo Git.
+O primeiro owner é criado interativamente pelo comando Go `go run ./cmd/create-admin`; a senha não fica em `.env`. `.env` é ignorado pelo Git.
 
 ## Telegram
 
@@ -20,11 +20,11 @@ O fluxo e as opções de execução do processo estão em [`telegram-bot/README.
 
 O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor Next.js; o serviço Go não recebe essa chave.
 
-## Backend Go (fundação em migração)
+## Backend Go
 
-O novo backend HTTP começa em `backend/`, seguindo a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Ele já inicializa PostgreSQL/Redis e oferece `GET /health/live` e `GET /health/ready`; as rotas de produto continuam no Next.js até migrarem e o corte ser feito explicitamente.
+O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). A autenticação administrativa e gestão de integrações já usam Go, PostgreSQL e Redis. Parte das ações e leituras de produto ainda usa Next/Prisma e será migrada em etapas.
 
-Para subir as dependências locais, execute `docker compose -f backend/compose.yaml up -d`. Configure `backend/.env.example` e rode `cd backend && go run ./cmd/http`. A primeira migration PostgreSQL está em `migrations/`; ela ainda não foi aplicada nem há importação dos dados SQLite. A tela web e o transporte Telegram existentes continuam usando o backend Next.js/serviço Telegram até as próximas etapas.
+Para subir PostgreSQL e Redis, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` e `000002` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
 
 ## Integrações
 
@@ -32,7 +32,7 @@ Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API
 
 No EasyBill já é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após o prazo. Criação individual de cliente e usuário ainda não está disponível no endpoint EasyBill: até ela ser implementada, use o bootstrap em **Novo cadastro** para criar uma nova empresa com o cliente inicial e o owner.
 
-Por enquanto o banco é SQLite local. Em produção, use um volume persistente e uma única instância da aplicação. As chaves OpenAI, Telegram, sessão e cifragem devem vir do gerenciador de segredos do ambiente de deploy. A rotação de `LYNX_ENCRYPTION_KEY` exige recriptografar os registros antes de descartar a chave antiga.
+Por enquanto, os dados de produto no Next continuam em SQLite local. Em produção, use PostgreSQL para o backend Go e planeje a migração dos dados antes do corte. As chaves OpenAI, Telegram, `LYNX_JWT_SIGNING_KEY` e `LYNX_ENCRYPTION_KEY` devem vir do gerenciador de segredos do ambiente de deploy. A rotação do JWT encerra sessões; a rotação da chave de cifragem exige recriptografar registros antes de descartar a chave antiga.
 
 ## Testes
 

@@ -97,8 +97,12 @@ func (r *IdentityRepository) RotateSession(ctx context.Context, oldHash string, 
 	}
 	defer tx.Rollback(ctx)
 	var old domain.Session
-	err = tx.QueryRow(ctx, `SELECT id,user_id,family_id,expires_at,revoked_at FROM admin_sessions WHERE refresh_token_hash=$1 FOR UPDATE`, oldHash).
-		Scan(&old.ID, &old.UserID, &old.FamilyID, &old.ExpiresAt, &old.RevokedAt)
+	var userActive bool
+	err = tx.QueryRow(ctx, `
+		SELECT s.id,s.user_id,s.family_id,s.expires_at,s.revoked_at,u.active
+		FROM admin_sessions s JOIN admin_users u ON u.id=s.user_id
+		WHERE s.refresh_token_hash=$1 FOR UPDATE OF s`, oldHash).
+		Scan(&old.ID, &old.UserID, &old.FamilyID, &old.ExpiresAt, &old.RevokedAt, &userActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrInvalidRefresh
 	}
@@ -114,7 +118,7 @@ func (r *IdentityRepository) RotateSession(ctx context.Context, oldHash string, 
 		}
 		return domain.ErrRefreshReuse
 	}
-	if !old.ExpiresAt.After(time.Now()) {
+	if !userActive || !old.ExpiresAt.After(time.Now()) {
 		return domain.ErrInvalidRefresh
 	}
 	if _, err := tx.Exec(ctx, `UPDATE admin_sessions SET revoked_at=now(),last_used_at=now() WHERE id=$1`, old.ID); err != nil {
