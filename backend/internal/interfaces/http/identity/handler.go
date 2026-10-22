@@ -171,7 +171,7 @@ func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.service.RequestPasswordReset(r.Context(), input.Email, clientIP(r)); err != nil {
 		// A resposta é igual exista ou não a conta; o log não inclui o endereço nem o token.
-		slog.Error("administrator password reset delivery failed")
+		slog.Error("administrator password reset request failed", "reason", err.Error())
 	}
 	w.WriteHeader(http.StatusAccepted)
 }

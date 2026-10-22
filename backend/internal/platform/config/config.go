@@ -14,7 +14,10 @@ type Config struct {
 	MailgunAPIKey         string `env:"MAILGUN_API_KEY"`
 	MailgunDomain         string `env:"MAILGUN_DOMAIN"`
 	MailgunFrom           string `env:"MAILGUN_FROM"`
-	PublicURL             string `env:"LYNX_PUBLIC_URL"`
+	PublicURL             string `env:"LYNX_PUBLIC_URL" envDefault:"http://localhost:3000"`
+	SMTPHost              string `env:"SMTP_HOST" envDefault:"127.0.0.1"`
+	SMTPPort              int    `env:"SMTP_PORT" envDefault:"1025"`
+	SMTPFrom              string `env:"SMTP_FROM" envDefault:"Lynx OS <no-reply@lynx.local>"`
 	TelegramInternalToken string `env:"LYNX_TELEGRAM_INTERNAL_TOKEN"`
 }
 

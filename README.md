@@ -10,7 +10,7 @@ Central de operações da Lynx para integrar os SaaS e provisionar uma empresa, 
 
 O primeiro owner é criado interativamente pelo comando Go `go run ./cmd/create-admin`; a senha não fica em `.env`. `.env` é ignorado pelo Git.
 
-Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir a própria senha e vincular o Telegram com um código de 8 dígitos válido por 10 minutos. O owner também tem a página **Equipe** para convidar administradores com papéis limitados, alterar papéis e desativar contas. Convites expiram em 24 horas; redefinição depende da configuração Mailgun no backend. Tokens de sessão e de uso único são armazenados como hashes no PostgreSQL.
+Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir a própria senha e vincular o Telegram com um código de 8 dígitos válido por 10 minutos. O owner também tem a página **Equipe** para convidar administradores com papéis limitados, alterar papéis e desativar contas. Convites expiram em 24 horas; em desenvolvimento, a redefinição chega ao Mailpit local (`http://localhost:8025`), sem Mailgun. Tokens de sessão e de uso único são armazenados como hashes no PostgreSQL.
 
 ## Telegram
 
@@ -26,7 +26,7 @@ O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A a
 
 O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). A autenticação administrativa e gestão de integrações já usam Go, PostgreSQL e Redis. Parte das ações e leituras de produto ainda usa Next/Prisma e será migrada em etapas.
 
-Para subir PostgreSQL e Redis, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001`, `000002` e `000003` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Para recuperação de senha, configure Mailgun no `.env` do backend. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
+Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001`, `000002` e `000003` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
 
 ## Integrações
 

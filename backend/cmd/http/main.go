@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/postgres"
 	redisinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/redis"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/saasclient"
+	smtpinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/smtp"
 	healthhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/health"
 	identityhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/identity"
 	integrationhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/integration"
@@ -72,11 +74,16 @@ func main() {
 			os.Exit(1)
 		}
 		var resetMailer identitydomain.PasswordResetMailer
-		mailConfigured := cfg.MailgunAPIKey != "" || cfg.MailgunDomain != "" || cfg.MailgunFrom != "" || cfg.PublicURL != ""
-		if mailConfigured {
+		if strings.EqualFold(cfg.Environment, "dev") || strings.EqualFold(cfg.Environment, "development") {
+			resetMailer, err = smtpinfra.NewPasswordResetMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom, cfg.PublicURL)
+			if err != nil {
+				logger.Error("local SMTP password recovery configuration is invalid")
+				os.Exit(1)
+			}
+		} else {
 			resetMailer, err = mailgun.NewPasswordResetMailer(cfg.MailgunAPIKey, cfg.MailgunDomain, cfg.MailgunFrom, cfg.PublicURL)
 			if err != nil {
-				logger.Error("Mailgun password recovery configuration is invalid")
+				logger.Error("Mailgun password recovery configuration is required outside development")
 				os.Exit(1)
 			}
 		}
