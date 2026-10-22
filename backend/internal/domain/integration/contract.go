@@ -4,13 +4,45 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 )
+
+type Record struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Slug      string     `json:"slug"`
+	BaseURL   string     `json:"baseUrl"`
+	Active    bool       `json:"active"`
+	RevokedAt *time.Time `json:"revokedAt,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+type SealedSecret struct {
+	Ciphertext string
+	IV         string
+	AuthTag    string
+}
+
+type Repository interface {
+	Create(context.Context, Record, SealedSecret) (Record, error)
+	List(context.Context) ([]Record, error)
+	Get(context.Context, string) (Record, SealedSecret, error)
+	ReplaceSecret(context.Context, string, SealedSecret) (Record, error)
+	Revoke(context.Context, string) (Record, error)
+}
+
+type SecretCipher interface {
+	Encrypt([]byte) (SealedSecret, error)
+	Decrypt(SealedSecret) ([]byte, error)
+}
 
 var (
 	ErrUnsupportedContractVersion = errors.New("SaaS contract version is not supported")
 	ErrOperationUnsupported       = errors.New("operation is not advertised by SaaS")
 	ErrInvalidCommand             = errors.New("command is invalid")
 	ErrIdempotencyKeyRequired     = errors.New("idempotency key is required for writes")
+	ErrIntegrationNotFound        = errors.New("integration not found")
 )
 
 type ServiceDescriptor struct {

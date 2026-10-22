@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,10 +13,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	application "github.com/lynx/lynx-os/backend/internal/application/health"
+	integrationapp "github.com/lynx/lynx-os/backend/internal/application/integration"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/health"
+	"github.com/lynx/lynx-os/backend/internal/infrastructure/cryptox"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/postgres"
 	redisinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/redis"
+	"github.com/lynx/lynx-os/backend/internal/infrastructure/saasclient"
 	healthhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/health"
+	integrationhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/integration"
 	"github.com/lynx/lynx-os/backend/internal/platform/config"
 	"github.com/lynx/lynx-os/backend/internal/platform/httpx"
 	redisclient "github.com/redis/go-redis/v9"
@@ -54,6 +59,26 @@ func main() {
 	)
 	router := httpx.NewRouter()
 	router.Mount("/health", healthhttp.NewHandler(checks).Routes())
+	if cfg.AdminAPIKey != "" || cfg.EncryptionKey != "" {
+		if cfg.AdminAPIKey == "" {
+			logger.Error("LYNX_ADMIN_API_KEY is required when enabling integration management")
+			os.Exit(1)
+		}
+		key, decodeErr := hex.DecodeString(cfg.EncryptionKey)
+		if decodeErr != nil || len(key) != 32 {
+			logger.Error("LYNX_ENCRYPTION_KEY must be 64 hexadecimal characters when enabling integration management")
+			os.Exit(1)
+		}
+		cipher, cipherErr := cryptox.NewAESGCM(key)
+		if cipherErr != nil {
+			logger.Error("could not initialize integration secret encryption")
+			os.Exit(1)
+		}
+		contractClient := saasclient.NewContractV1Client(nil)
+		contractService := integrationapp.NewContractService(contractClient)
+		integrationService := integrationapp.NewService(postgres.NewIntegrationRepository(db), cipher, contractService)
+		router.Mount("/api/v1/integrations", integrationhttp.NewHandler(integrationService, cfg.AdminAPIKey).Routes())
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
