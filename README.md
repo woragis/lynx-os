@@ -20,6 +20,12 @@ O fluxo e as opções de execução do processo estão em [`telegram-bot/README.
 
 O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor Next.js; o serviço Go não recebe essa chave.
 
+## Backend Go (fundação em migração)
+
+O novo backend HTTP começa em `backend/`, seguindo a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Ele já inicializa PostgreSQL/Redis e oferece `GET /health/live` e `GET /health/ready`; as rotas de produto continuam no Next.js até migrarem e o corte ser feito explicitamente.
+
+Para subir as dependências locais, execute `docker compose -f backend/compose.yaml up -d`. Configure `backend/.env.example` e rode `cd backend && go run ./cmd/http`. A primeira migration PostgreSQL está em `migrations/`; ela ainda não foi aplicada nem há importação dos dados SQLite. A tela web e o transporte Telegram existentes continuam usando o backend Next.js/serviço Telegram até as próximas etapas.
+
 ## Integrações
 
 Cadastre no painel o nome e domínio base do SaaS e uma API key com somente os escopos `provisioning:read` e `provisioning:write`. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. O painel consulta `GET /api/v1/provisioning`, confere `contractVersion: "1"` e então chama `POST /api/v1/provisioning` com `Idempotency-Key`.
