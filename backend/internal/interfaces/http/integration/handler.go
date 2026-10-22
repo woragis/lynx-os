@@ -28,6 +28,7 @@ func (h *Handler) Routes() chi.Router {
 	router.Post("/", h.create)
 	router.Get("/", h.list)
 	router.Put("/{id}/api-key", h.rotateKey)
+	router.Post("/{id}/operations", h.execute)
 	router.Delete("/{id}", h.revoke)
 	return router
 }
@@ -126,6 +127,37 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": item})
+}
+
+func (h *Handler) execute(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Operation string         `json:"operation"`
+		Input     map[string]any `json:"input"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	response, err := h.service.Execute(r.Context(), chi.URLParam(r, "id"), domain.Command{
+		Operation: input.Operation,
+		Input:     input.Input,
+	}, r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		if errors.Is(err, domain.ErrIntegrationNotFound) {
+			writeJSON(w, http.StatusNotFound, apiError("integration_not_found", "Integration was not found"))
+			return
+		}
+		if errors.Is(err, application.ErrIntegrationRevoked) {
+			writeJSON(w, http.StatusConflict, apiError("integration_inactive", "Integration is inactive or revoked"))
+			return
+		}
+		if errors.Is(err, application.ErrInvalidOperation) {
+			writeJSON(w, http.StatusUnprocessableEntity, apiError("invalid_operation", "Operation is invalid or not advertised by the SaaS"))
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, apiError("saas_operation_failed", "SaaS operation failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": response})
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, target any) bool {

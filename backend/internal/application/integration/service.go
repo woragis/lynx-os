@@ -19,6 +19,8 @@ var (
 	ErrInvalidIntegration = errors.New("integration data is invalid")
 	ErrIntegrationRevoked = errors.New("integration is revoked")
 	ErrSaaSValidation     = errors.New("SaaS contract validation failed")
+	ErrInvalidOperation   = errors.New("provisioning operation is invalid")
+	ErrSaaSExecution      = errors.New("SaaS operation failed")
 )
 
 type Service struct {
@@ -92,6 +94,28 @@ func (s *Service) RotateKey(ctx context.Context, id, apiKey string) (domain.Reco
 
 func (s *Service) Revoke(ctx context.Context, id string) (domain.Record, error) {
 	return s.repository.Revoke(ctx, id)
+}
+
+func (s *Service) Execute(ctx context.Context, id string, command domain.Command, idempotencyKey string) (domain.Response, error) {
+	item, sealed, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	if !item.Active || item.RevokedAt != nil {
+		return domain.Response{}, ErrIntegrationRevoked
+	}
+	apiKey, err := s.cipher.Decrypt(sealed)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response, err := s.contract.Execute(ctx, item.BaseURL, string(apiKey), command, idempotencyKey)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidCommand) || errors.Is(err, domain.ErrIdempotencyKeyRequired) || errors.Is(err, domain.ErrOperationUnsupported) {
+			return domain.Response{}, fmt.Errorf("%w: %v", ErrInvalidOperation, err)
+		}
+		return domain.Response{}, fmt.Errorf("%w: %v", ErrSaaSExecution, err)
+	}
+	return response, nil
 }
 
 func newID() (string, error) {
