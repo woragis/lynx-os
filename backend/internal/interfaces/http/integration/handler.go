@@ -1,51 +1,36 @@
 package integration
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	application "github.com/lynx/lynx-os/backend/internal/application/integration"
+	identitydomain "github.com/lynx/lynx-os/backend/internal/domain/identity"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/integration"
+	identityhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/identity"
 )
 
 type Handler struct {
-	service  *application.Service
-	adminKey string
+	service *application.Service
 }
 
-func NewHandler(service *application.Service, adminKey string) *Handler {
-	return &Handler{service: service, adminKey: adminKey}
+func NewHandler(service *application.Service) *Handler {
+	return &Handler{service: service}
 }
 
 func (h *Handler) Routes() chi.Router {
 	router := chi.NewRouter()
-	router.Use(h.authenticate)
-	router.Post("/", h.create)
 	router.Get("/", h.list)
-	router.Put("/{id}/api-key", h.rotateKey)
-	router.Post("/{id}/operations", h.execute)
-	router.Delete("/{id}", h.revoke)
+	admins := identityhttp.RequireRoles(identitydomain.RoleOwner, identitydomain.RoleAdmin)
+	operators := identityhttp.RequireRoles(identitydomain.RoleOwner, identitydomain.RoleAdmin, identitydomain.RoleOperator)
+	router.With(admins).Post("/", h.create)
+	router.With(admins).Put("/{id}/api-key", h.rotateKey)
+	router.With(operators).Post("/{id}/operations", h.execute)
+	router.With(admins).Delete("/{id}", h.revoke)
 	return router
-}
-
-func (h *Handler) authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.adminKey == "" {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{"code": "admin_auth_unconfigured", "message": "Admin API is not configured"}})
-			return
-		}
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if len(provided) != len(h.adminKey) || subtle.ConstantTimeCompare([]byte(provided), []byte(h.adminKey)) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"code": "unauthorized", "message": "Authentication required"}})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 type createRequest struct {

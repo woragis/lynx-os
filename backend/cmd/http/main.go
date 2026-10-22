@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	application "github.com/lynx/lynx-os/backend/internal/application/health"
+	identityapp "github.com/lynx/lynx-os/backend/internal/application/identity"
 	integrationapp "github.com/lynx/lynx-os/backend/internal/application/integration"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/health"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/cryptox"
@@ -20,7 +21,9 @@ import (
 	redisinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/redis"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/saasclient"
 	healthhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/health"
+	identityhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/identity"
 	integrationhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/integration"
+	"github.com/lynx/lynx-os/backend/internal/platform/authn"
 	"github.com/lynx/lynx-os/backend/internal/platform/config"
 	"github.com/lynx/lynx-os/backend/internal/platform/httpx"
 	redisclient "github.com/redis/go-redis/v9"
@@ -59,9 +62,24 @@ func main() {
 	)
 	router := httpx.NewRouter()
 	router.Mount("/health", healthhttp.NewHandler(checks).Routes())
-	if cfg.AdminAPIKey != "" || cfg.EncryptionKey != "" {
-		if cfg.AdminAPIKey == "" {
-			logger.Error("LYNX_ADMIN_API_KEY is required when enabling integration management")
+	var identityHandler *identityhttp.Handler
+	if cfg.JWTSigningKey != "" {
+		jwtManager, jwtErr := authn.NewJWTManager([]byte(cfg.JWTSigningKey))
+		if jwtErr != nil {
+			logger.Error("LYNX_JWT_SIGNING_KEY must contain at least 32 characters")
+			os.Exit(1)
+		}
+		identityService, serviceErr := identityapp.NewService(postgres.NewIdentityRepository(db), redisinfra.NewLoginRateLimiter(redis), jwtManager)
+		if serviceErr != nil {
+			logger.Error("could not initialize administrator authentication")
+			os.Exit(1)
+		}
+		identityHandler = identityhttp.NewHandler(identityService, cfg.Environment == "production")
+		router.Mount("/api/v1/auth", identityHandler.Routes())
+	}
+	if cfg.EncryptionKey != "" {
+		if identityHandler == nil {
+			logger.Error("LYNX_JWT_SIGNING_KEY is required when enabling integration management")
 			os.Exit(1)
 		}
 		key, decodeErr := hex.DecodeString(cfg.EncryptionKey)
@@ -77,7 +95,7 @@ func main() {
 		contractClient := saasclient.NewContractV1Client(nil)
 		contractService := integrationapp.NewContractService(contractClient)
 		integrationService := integrationapp.NewService(postgres.NewIntegrationRepository(db), cipher, contractService)
-		router.Mount("/api/v1/integrations", integrationhttp.NewHandler(integrationService, cfg.AdminAPIKey).Routes())
+		router.Mount("/api/v1/integrations", identityHandler.ProtectedMiddleware(integrationhttp.NewHandler(integrationService).Routes()))
 	}
 
 	server := &http.Server{

@@ -9,7 +9,7 @@ type Config struct {
 	Environment   string `env:"LYNX_ENV" envDefault:"development"`
 	ReadTimeout   int    `env:"LYNX_HTTP_READ_TIMEOUT_SECONDS" envDefault:"10"`
 	WriteTimeout  int    `env:"LYNX_HTTP_WRITE_TIMEOUT_SECONDS" envDefault:"30"`
-	AdminAPIKey   string `env:"LYNX_ADMIN_API_KEY"`
+	JWTSigningKey string `env:"LYNX_JWT_SIGNING_KEY"`
 	EncryptionKey string `env:"LYNX_ENCRYPTION_KEY"`
 }
 
