@@ -25,16 +25,16 @@ Cada recurso devolve `id`, `resourceType`, `accountId` (nulo para account), `lif
   "contractVersion": "2",
   "service": { "name": "EasyBill", "slug": "easybill" },
   "resources": {
-    "account": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {} },
-    "customer": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {} },
-    "user": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {} }
+    "account": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {}, "purge": { "mode": "delete", "cascades": ["customer", "user"] } },
+    "customer": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {}, "purge": { "mode": "delete", "cascades": ["contracts", "revenueEvents", "visits", "partners"] } },
+    "user": { "operations": ["list", "get", "create", "update", "deactivate", "reactivate", "purge"], "fields": {}, "purge": { "mode": "anonymize", "requiresSoleAccountMembership": true } }
   },
   "bootstrap": { "supported": true, "creates": ["account", "initialCustomer", "initialUser"] },
   "lifecycle": { "deactivation": "reversible", "purge": "after-grace-period", "minimumGracePeriodDays": 180 }
 }
 ```
 
-`fields` é por operação e declara `required`, `optional`, `readOnly`, `enum` e formatos. Um cliente só pergunta ou envia campos que o SaaS anuncia. `operations` lista apenas o que realmente funciona. `minimumGracePeriodDays` é um limite do SaaS; o Lynx OS pode impor um prazo maior, nunca menor.
+`fields` é por operação e declara `required`, `optional`, `readOnly`, `enum` e formatos. Um cliente só pergunta ou envia campos que o SaaS anuncia. `operations` lista apenas o que realmente funciona. `minimumGracePeriodDays` é um limite do SaaS; o Lynx OS pode impor um prazo maior, nunca menor. `purge.mode` declara `delete` ou `anonymize`; `purge.cascades` nomeia dependentes removidos junto e `requiresSoleAccountMembership` explicita a condição para apagar/anonymize uma identidade compartilhada.
 
 ## Envelope POST
 
@@ -60,7 +60,7 @@ Operações definidas:
 - `resource.update`: tipo, ids, `changes` parcial limitado aos campos editáveis.
 - `resource.deactivate`: hiberna o recurso agora, define `deactivatedAt` e `purgeAfter` segundo política; account desativada fica efetivamente indisponível com seus descendentes.
 - `resource.reactivate`: cancela a purga antes do prazo e restaura apenas o estado alterado por esta desativação; não reativa descendentes que já estavam hibernados independentemente.
-- `resource.purge`: hard delete irreversível. Só aceita recurso hibernado cujo `purgeAfter` já venceu. Conta exige que descendentes também sejam elegíveis; não faz uma cascata silenciosa fora da política. Requer scope `provisioning:purge`.
+- `resource.purge`: ação irreversível declarada nas capacidades (`delete` ou `anonymize`). Só aceita recurso hibernado cujo `purgeAfter` já venceu. A resposta declara o modo e os dependentes afetados; cascatas nunca ficam implícitas. Requer scope `provisioning:purge`.
 
 IDs são opacos para o Lynx OS. `customer` e `user` sempre são escopados à conta. Cursor e paginação não podem revelar outros tenants.
 
@@ -87,7 +87,7 @@ Códigos estáveis incluem `contract.unsupported_version`, `operation.unsupporte
 
 Padrão inicial: 180 dias, configurável no Lynx OS e nunca abaixo do mínimo anunciado pelo SaaS. Desativar não apaga nem altera dados cadastrais/financeiros: só bloqueia uso e marca o estado operacional. Uma restauração até `purgeAfter` cancela a purga. A execução definitiva é uma operação idempotente, auditada no Lynx OS e no SaaS. Falha remota deixa o pedido pendente para retry; não é apresentada como exclusão concluída.
 
-Uma account hibernada impede login/operações daquela account, sem desligar a identidade global do usuário se ele tiver outros vínculos. Um cliente hibernado não aparece nas listas ativas nem aceita novas operações, mas seus registros permanecem íntegros durante a retenção. A exclusão permanente usa a política própria do SaaS para dependências; não apaga ledger ou histórico por efeito colateral escondido.
+Uma account hibernada impede login/operações daquela account, sem desligar a identidade global do usuário se ele tiver outros vínculos. Um cliente hibernado não aparece nas listas ativas nem aceita novas operações, mas seus registros permanecem íntegros durante a retenção. A exclusão permanente segue a política de dependências declarada pelo SaaS; por exemplo, no EasyBill apagar definitivamente um cliente remove também razão, contratos, visitas e sócios em cascata, e a interface deve mostrar isso antes da confirmação.
 
 ## Segurança operacional
 
