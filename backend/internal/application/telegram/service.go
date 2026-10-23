@@ -292,7 +292,7 @@ func (s *Service) collectProvisioning(ctx context.Context, userID, telegramID st
 	}
 	if len(missing) > 0 || selected == nil {
 		conversation.State = "COLLECTING"
-		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Ainda preciso de: " + strings.Join(missing, ", ") + ". Pode mandar o que falta em uma ou mais frases."}, userID)
+		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "🤖 Ainda preciso de: " + strings.Join(missing, ", ") + ". Pode mandar o que falta em uma ou mais frases ✨"}, userID)
 	}
 	data.IntegrationID = selected.ID
 	if data.IdempotencyKey == "" {
