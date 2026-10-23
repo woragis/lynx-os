@@ -257,7 +257,7 @@ func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, co
 			if errors.Is(executeErr, domain.ErrInvalidCommand) || errors.Is(executeErr, domain.ErrIdempotencyKeyRequired) || errors.Is(executeErr, domain.ErrOperationUnsupported) {
 				return domain.Response{}, fmt.Errorf("%w: %v", ErrInvalidOperation, executeErr)
 			}
-			return domain.Response{}, fmt.Errorf("%w: %v", ErrSaaSExecution, executeErr)
+			return domain.Response{}, fmt.Errorf("%w: %w", ErrSaaSExecution, executeErr)
 		}
 		return response, nil
 	}
@@ -304,7 +304,7 @@ func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, co
 		if errors.Is(err, domain.ErrInvalidCommand) || errors.Is(err, domain.ErrIdempotencyKeyRequired) || errors.Is(err, domain.ErrOperationUnsupported) {
 			return domain.Response{}, fmt.Errorf("%w: %v", ErrInvalidOperation, err)
 		}
-		return domain.Response{}, fmt.Errorf("%w: %v", ErrSaaSExecution, err)
+		return domain.Response{}, fmt.Errorf("%w: %w", ErrSaaSExecution, err)
 	}
 	encodedResponse, err := json.Marshal(response)
 	if err != nil {

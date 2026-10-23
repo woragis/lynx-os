@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -261,6 +262,23 @@ func (h *Handler) execute(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, domain.ErrOperationInProgress) {
 			writeJSON(w, http.StatusConflict, apiError("operation_in_progress", "Operation with this idempotency key is still in progress"))
+			return
+		}
+		var remoteErr *domain.RemoteError
+		if errors.As(err, &remoteErr) && (remoteErr.StatusCode == http.StatusBadRequest || remoteErr.StatusCode == http.StatusConflict) {
+			message := strings.TrimSpace(strings.Map(func(r rune) rune {
+				if r < 32 && r != '\n' && r != '\t' {
+					return -1
+				}
+				return r
+			}, remoteErr.Message))
+			if message == "" {
+				message = "O SaaS recusou os dados enviados. Revise os campos e tente novamente."
+			}
+			if len(message) > 600 {
+				message = message[:600]
+			}
+			writeJSON(w, http.StatusBadGateway, apiError("saas_validation_failed", message))
 			return
 		}
 		writeJSON(w, http.StatusBadGateway, apiError("saas_operation_failed", "SaaS operation failed"))

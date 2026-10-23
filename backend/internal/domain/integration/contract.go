@@ -103,6 +103,19 @@ type Response struct {
 	Replayed        bool            `json:"replayed"`
 }
 
+type RemoteError struct {
+	StatusCode int
+	Code       string
+	Message    string
+}
+
+func (e *RemoteError) Error() string {
+	if e.Code == "" {
+		return "SaaS returned an error response"
+	}
+	return "SaaS returned an error response (" + e.Code + ")"
+}
+
 type SaaSContract interface {
 	Discover(context.Context, string, string) (Capabilities, error)
 	Execute(context.Context, string, string, Command, string) (Response, error)

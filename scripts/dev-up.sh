@@ -28,7 +28,7 @@ start_process() {
     echo "Frontend já está respondendo em http://localhost:3100; processo existente mantido."
     return
   fi
-  nohup "$@" >>"$log_dir/$name.log" 2>&1 </dev/null &
+  nohup setsid "$@" >>"$log_dir/$name.log" 2>&1 </dev/null &
   echo "$!" > "$pid_file"; echo "$name iniciado (PID $!)."
 }
 start_process api "$root/scripts/with-backend-env.sh" "$root/.local/bin/lynx-api"

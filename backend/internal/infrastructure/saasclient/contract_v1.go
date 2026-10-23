@@ -19,19 +19,6 @@ import (
 const contractPath = "/api/v1/provisioning"
 const maxResponseBytes = 1 << 20
 
-type RemoteError struct {
-	StatusCode int
-	Code       string
-	Message    string
-}
-
-func (e *RemoteError) Error() string {
-	if e.Code == "" {
-		return fmt.Sprintf("SaaS returned HTTP %d", e.StatusCode)
-	}
-	return fmt.Sprintf("SaaS returned HTTP %d (%s)", e.StatusCode, e.Code)
-}
-
 type ContractV1Client struct {
 	httpClient *http.Client
 }
@@ -152,5 +139,5 @@ func remoteError(status int, body []byte) error {
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(body, &response)
-	return &RemoteError{StatusCode: status, Code: response.Error.Code, Message: response.Error.Message}
+	return &domain.RemoteError{StatusCode: status, Code: response.Error.Code, Message: response.Error.Message}
 }

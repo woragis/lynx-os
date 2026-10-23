@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 missing=0
-for tool in make docker go node npm openssl psql curl; do
+for tool in make docker go node npm openssl psql curl setsid; do
   if command -v "$tool" >/dev/null 2>&1; then printf 'OK   %s\n' "$tool"; else printf 'FALTA %s\n' "$tool"; missing=1; fi
 done
 if command -v docker >/dev/null 2>&1; then

@@ -1,20 +1,43 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { lynxApi } from "@/lib/server/lynx-api";
+import { lynxApi, LynxApiError } from "@/lib/server/lynx-api";
 import { discoverCapabilities, executeProvisioning, executeOperation, listIntegrations, type BootstrapPayload, type ContractCapabilities } from "@/lib/server/provisioning";
 
+const requiredText = (label: string, max: number) => z.string().trim().min(1, `Preencha ${label}.`).max(max, `${label} deve ter no máximo ${max} caracteres.`);
+const taxId = (account = false) => z.string().trim().refine((value) => {
+  const digits = value.replace(/\D/g, "");
+  return account ? digits.length === 14 : digits.length === 11 || digits.length === 14;
+}, account ? "Informe um CNPJ com 14 dígitos." : "Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.");
+
 const BootstrapFormSchema = z.object({
-  integrationId: z.string().min(1),
+  integrationId: z.string().min(1, "Selecione o SaaS."),
   contractVersion: z.literal("1"),
   operation: z.literal("bootstrap"),
   input: z.object({
-    account: z.object({ name: z.string().trim().min(1).max(160), taxId: z.string().trim().min(11).max(18), email: z.string().trim().email().max(254), address: z.string().trim().min(1).max(240) }),
-    initialCustomer: z.object({ tradeName: z.string().trim().min(1).max(160), legalName: z.string().trim().max(160), taxId: z.string().trim().min(11).max(18), email: z.union([z.literal(""), z.string().trim().email().max(254)]), phone: z.string().max(20), taxRegime: z.string().trim().min(1).max(120), relationshipType: z.enum(["Recorrente", "Avulso"]), status: z.enum(["Ativo", "Inativo"]) }),
-    initialUser: z.object({ name: z.string().trim().min(1).max(160), email: z.string().trim().email().max(254), phone: z.string().max(20) }),
+    account: z.object({ name: requiredText("o nome do escritório", 160), taxId: taxId(true), email: z.string().trim().email("Informe um e-mail válido para o escritório.").max(254), address: requiredText("o endereço completo", 240) }),
+    initialCustomer: z.object({ tradeName: requiredText("o nome fantasia", 160), legalName: z.string().trim().max(160, "A razão social deve ter no máximo 160 caracteres."), taxId: taxId(), email: z.union([z.literal(""), z.string().trim().email("Informe um e-mail válido para o cliente.").max(254)]), phone: z.string().max(20, "O telefone do cliente deve ter no máximo 20 caracteres."), taxRegime: requiredText("o regime tributário", 120), relationshipType: z.enum(["Recorrente", "Avulso"], { error: "Selecione o tipo de relação." }), status: z.enum(["Ativo", "Inativo"], { error: "Selecione o status do cliente." }) }),
+    initialUser: z.object({ name: requiredText("o nome da pessoa responsável", 160), email: z.string().trim().email("Informe um e-mail válido para o acesso." ).max(254), phone: z.string().max(20, "O telefone deve ter no máximo 20 caracteres.") }),
   }),
 });
+
+export type ProvisionFormState = {
+  values: Record<string, string>;
+  fieldErrors: Record<string, string>;
+  message?: string;
+  revision: number;
+};
+
+const provisionFieldNames = ["integrationId", "accountName", "accountTaxId", "accountEmail", "accountAddress", "customerTradeName", "customerLegalName", "customerTaxId", "customerEmail", "customerPhone", "customerTaxRegime", "relationshipType", "customerStatus", "userName", "userEmail", "userPhone", "idempotencyKey"];
+const issueFieldMap: Record<string, string> = {
+  integrationId: "integrationId",
+  "input.account.name": "accountName", "input.account.taxId": "accountTaxId", "input.account.email": "accountEmail", "input.account.address": "accountAddress",
+  "input.initialCustomer.tradeName": "customerTradeName", "input.initialCustomer.legalName": "customerLegalName", "input.initialCustomer.taxId": "customerTaxId", "input.initialCustomer.email": "customerEmail", "input.initialCustomer.phone": "customerPhone", "input.initialCustomer.taxRegime": "customerTaxRegime", "input.initialCustomer.relationshipType": "relationshipType", "input.initialCustomer.status": "customerStatus",
+  "input.initialUser.name": "userName", "input.initialUser.email": "userEmail", "input.initialUser.phone": "userPhone",
+};
+
 import { requireRoles } from "@/lib/server/session";
 
 export async function addIntegrationAction(formData: FormData) {
@@ -99,32 +122,44 @@ export async function rotateIntegrationKeyAction(formData: FormData) {
   redirect("/integrations?rotacionada=1");
 }
 
-export async function provisionAction(formData: FormData) {
+export async function provisionAction(_previousState: ProvisionFormState, formData: FormData): Promise<ProvisionFormState> {
   await requireRoles(["owner", "admin", "operator"]);
-  const integrationId = String(formData.get("integrationId") ?? "");
-  const text = (name: string) => String(formData.get(name) ?? "").trim();
+  const values = Object.fromEntries(provisionFieldNames.map((name) => [name, String(formData.get(name) ?? "").trim()]));
+  const integrationId = values.integrationId;
+  const text = (name: string) => values[name] ?? "";
   const payloadCandidate = {
     contractVersion: "1",
     operation: "bootstrap",
     input: {
-      account: { name: text("accountName"), taxId: text("accountTaxId"), email: text("accountEmail"), address: text("accountAddress") },
-      initialCustomer: { tradeName: text("customerTradeName"), legalName: text("customerLegalName"), taxId: text("customerTaxId"), email: text("customerEmail"), phone: text("customerPhone"), taxRegime: text("customerTaxRegime"), relationshipType: text("relationshipType"), status: text("customerStatus") },
+      account: { name: text("accountName"), taxId: text("accountTaxId").replace(/\D/g, ""), email: text("accountEmail"), address: text("accountAddress") },
+      initialCustomer: { tradeName: text("customerTradeName"), legalName: text("customerLegalName"), taxId: text("customerTaxId").replace(/\D/g, ""), email: text("customerEmail"), phone: text("customerPhone"), taxRegime: text("customerTaxRegime"), relationshipType: text("relationshipType"), status: text("customerStatus") },
       initialUser: { name: text("userName"), email: text("userEmail"), phone: text("userPhone") },
     },
   };
   const parsedPayload = BootstrapFormSchema.safeParse({ integrationId, ...payloadCandidate });
   if (!parsedPayload.success) {
-    redirect("/provisioning?erro=campos");
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of parsedPayload.error.issues) {
+      const fieldName = issueFieldMap[issue.path.join(".")];
+      if (fieldName && !fieldErrors[fieldName]) fieldErrors[fieldName] = issue.message;
+    }
+    return { values, fieldErrors, message: "Não foi enviado. Corrija os campos destacados; os dados preenchidos foram mantidos.", revision: _previousState.revision + 1 };
   }
   const payload = parsedPayload.data as BootstrapPayload;
   const idempotencyKey = text("idempotencyKey");
-  if (!idempotencyKey) redirect("/provisioning?erro=idempotencia");
+  if (!idempotencyKey) return { values, fieldErrors: { idempotencyKey: "Atualize a página e tente novamente." }, message: "Não foi possível identificar esta solicitação.", revision: _previousState.revision + 1 };
   try {
     await executeProvisioning(integrationId, payload, idempotencyKey);
     redirect(`/provisioning?integrationId=${encodeURIComponent(integrationId)}&request=${encodeURIComponent(idempotencyKey)}`);
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
-    redirect(`/provisioning?erro=conexao&request=${encodeURIComponent(idempotencyKey)}`);
+    const message = error instanceof LynxApiError
+      ? error.message
+      : "Não foi possível confirmar a resposta do sistema. Seus dados foram mantidos; tente novamente antes de fechar esta página.";
+    const fieldErrors: Record<string, string> = error instanceof LynxApiError && error.code === "saas_validation_failed"
+      ? { _form: message }
+      : {};
+    return { values: { ...values, idempotencyKey: error instanceof LynxApiError && error.code === "saas_validation_failed" ? randomUUID() : idempotencyKey }, fieldErrors, message, revision: _previousState.revision + 1 };
   }
 }
 
