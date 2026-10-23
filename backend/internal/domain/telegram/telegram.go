@@ -27,7 +27,6 @@ type ConversationRepository interface {
 	SaveConversation(context.Context, Conversation, integration.SealedSecret) error
 	DeleteConversation(context.Context, string) error
 	GetUpdateOffset(context.Context) (int64, error)
-	AdvanceUpdateOffset(context.Context, int64) error
 	BeginUpdate(context.Context, int64, string) (bool, error)
 	CompleteUpdate(context.Context, int64, string, bool) error
 }

@@ -43,10 +43,7 @@ func (s *Service) BeginUpdate(ctx context.Context, updateID int64, chatID string
 }
 
 func (s *Service) CompleteUpdate(ctx context.Context, updateID int64, chatID string, ignored bool) error {
-	if err := s.conversations.CompleteUpdate(ctx, updateID, chatID, ignored); err != nil {
-		return err
-	}
-	return s.conversations.AdvanceUpdateOffset(ctx, updateID)
+	return s.conversations.CompleteUpdate(ctx, updateID, chatID, ignored)
 }
 
 func (s *Service) UpdateOffset(ctx context.Context) (int64, error) {
@@ -104,7 +101,27 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 		conversation.State = "MENU"
 	}
 	if isStart(text) {
+		if data.PendingOperation != "" && conversation.State == "AWAITING_CONFIRMATION" {
+			message := "Há uma alteração pendente: " + data.PendingOperation + "."
+			buttons := [][]domain.Button{{{Text: "Confirmar", Data: "confirm"}, {Text: "Cancelar", Data: "menu:cancel"}}}
+			if data.PendingOperation == "resource.purge" {
+				message += " Digite PURGAR para confirmar a ação permanente."
+				buttons = [][]domain.Button{{{Text: "Cancelar", Data: "menu:cancel"}}}
+			}
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: message, Buttons: buttons}, user.ID)
+		}
+		if conversation.State == "AWAITING_CONFIRMATION" && data.Draft.UserEmail != nil {
+			selected, selectErr := s.activeIntegration(ctx, data.IntegrationID)
+			if selectErr != nil {
+				return nil, selectErr
+			}
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: formatPreview(data.Draft, selected.Name), Buttons: [][]domain.Button{{{Text: "Confirmar cadastro", Data: "confirm"}, {Text: "Cancelar", Data: "menu:cancel"}}}}, user.ID)
+		}
+		if conversation.State == "COLLECTING" {
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Seu rascunho continua salvo. Envie os próximos dados em linguagem natural; use Cancelar para descartar.", Buttons: [][]domain.Button{{{Text: "Cancelar rascunho", Data: "menu:cancel"}}}}, user.ID)
+		}
 		conversation.State = "MENU"
+		data = domain.ConversationData{}
 		reply := menuReply(chatID, callbackID, "Lynx OS pronto. Escolha uma ação; posso coletar um cadastro em linguagem natural e pedir confirmação antes de enviar.")
 		return s.saveReply(ctx, conversation, data, reply, user.ID)
 	}
@@ -130,7 +147,7 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 	if conversation.State == "COLLECTING" {
 		return s.collectProvisioning(ctx, user.ID, telegramID, chatID, callbackID, text, conversation, data)
 	}
-	return menuReply(chatID, callbackID, "Escolha Novo cadastro ou Listar empresas, clientes e usuários."), nil
+	return s.saveReply(ctx, conversation, data, menuReply(chatID, callbackID, "Escolha Novo cadastro ou Listar empresas, clientes e usuários."), user.ID)
 }
 
 func (s *Service) handleCallback(ctx context.Context, userID string, chatID int64, callbackID, dataValue string, conversation domain.Conversation, data domain.ConversationData) (*domain.Reply, error) {
@@ -375,12 +392,11 @@ func (s *Service) resourceAction(ctx context.Context, userID string, chatID int6
 	data.IdempotencyKey = key
 	conversation.State = "AWAITING_CONFIRMATION"
 	confirmText := "Confirme a ação: " + operation + " sobre " + resourceLabel(data.ResourceType) + "."
-	confirmData := "confirm"
 	if operation == "resource.purge" {
 		confirmText = "Esta purga é permanente e pode afetar registros relacionados. Digite PURGAR para continuar."
-		confirmData = "confirm-purge"
+		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: confirmText, Buttons: [][]domain.Button{{{Text: "Cancelar", Data: "menu:cancel"}}}}, userID)
 	}
-	return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: confirmText, Buttons: [][]domain.Button{{{Text: "Confirmar", Data: confirmData}, {Text: "Cancelar", Data: "menu:cancel"}}}}, userID)
+	return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: confirmText, Buttons: [][]domain.Button{{{Text: "Confirmar", Data: "confirm"}, {Text: "Cancelar", Data: "menu:cancel"}}}}, userID)
 }
 
 func (s *Service) collectResourceChanges(ctx context.Context, userID string, chatID int64, callbackID, text string, conversation domain.Conversation, data domain.ConversationData) (*domain.Reply, error) {

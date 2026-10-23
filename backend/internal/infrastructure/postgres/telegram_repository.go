@@ -64,10 +64,6 @@ func (r *TelegramRepository) GetUpdateOffset(ctx context.Context) (int64, error)
 	err := r.pool.QueryRow(ctx, `SELECT update_offset FROM telegram_bot_state WHERE id=1`).Scan(&offset)
 	return offset, err
 }
-func (r *TelegramRepository) AdvanceUpdateOffset(ctx context.Context, id int64) error {
-	_, err := r.pool.Exec(ctx, `UPDATE telegram_bot_state SET update_offset=GREATEST(update_offset,$1),updated_at=now() WHERE id=1`, id+1)
-	return err
-}
 func (r *TelegramRepository) BeginUpdate(ctx context.Context, id int64, chatID string) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `INSERT INTO telegram_bot_updates(update_id,chat_id,state) VALUES($1,$2,'processing') ON CONFLICT(update_id) DO UPDATE SET state='processing',created_at=now(),chat_id=EXCLUDED.chat_id WHERE telegram_bot_updates.state='processing' AND telegram_bot_updates.created_at<now()-interval '2 minutes'`, id, chatID)
 	if err != nil {
@@ -80,8 +76,18 @@ func (r *TelegramRepository) CompleteUpdate(ctx context.Context, id int64, _ str
 	if ignored {
 		state = "ignored"
 	}
-	_, err := r.pool.Exec(ctx, `UPDATE telegram_bot_updates SET state=$2,processed_at=now() WHERE update_id=$1`, id, state)
-	return err
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE telegram_bot_updates SET state=$2,processed_at=now() WHERE update_id=$1`, id, state); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE telegram_bot_state SET update_offset=GREATEST(update_offset,$1),updated_at=now() WHERE id=1`, id+1); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 var _ telegram.ConversationRepository = (*TelegramRepository)(nil)
