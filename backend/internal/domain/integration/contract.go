@@ -12,6 +12,7 @@ type Record struct {
 	Name      string     `json:"name"`
 	Slug      string     `json:"slug"`
 	BaseURL   string     `json:"baseUrl"`
+	AppURL    string     `json:"appUrl,omitempty"`
 	Active    bool       `json:"active"`
 	RevokedAt *time.Time `json:"revokedAt,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -30,6 +31,8 @@ type Repository interface {
 	Get(context.Context, string) (Record, SealedSecret, error)
 	ReplaceSecret(context.Context, string, SealedSecret) (Record, error)
 	Revoke(context.Context, string) (Record, error)
+	UpdateMetadata(context.Context, string, Record) (Record, error)
+	SetActive(context.Context, string, bool) (Record, error)
 }
 
 type ProvisioningRecord struct {
@@ -46,6 +49,8 @@ type OperationRepository interface {
 	CompleteProvisioning(context.Context, string, SealedSecret, AuditEntry) error
 	FailProvisioning(context.Context, string, AuditEntry) error
 	WriteAudit(context.Context, AuditEntry) error
+	FindProvisioning(context.Context, string, string) (ProvisioningRecord, error)
+	ListProvisioning(context.Context, string, int) ([]ProvisioningRecord, error)
 }
 
 type SecretCipher interface {

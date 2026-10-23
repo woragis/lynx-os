@@ -1,9 +1,11 @@
 import { addIntegrationAction, editIntegrationAction, revokeIntegrationAction, rotateIntegrationKeyAction, toggleIntegrationAction } from "@/app/actions";
-import { db } from "@/lib/server/db";
+import { listIntegrations } from "@/lib/server/provisioning";
+import { requireSession } from "@/lib/server/session";
 
 export default async function IntegrationsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const params = await searchParams;
-  const integrations = await db.integration.findMany({ orderBy: { createdAt: "desc" }, select: { id: true, name: true, baseUrl: true, appUrl: true, active: true, revokedAt: true } });
+  await requireSession();
+  const integrations = await listIntegrations();
   return <div className="page-wrap">
     <div className="page-heading"><div><p className="eyebrow">ECOSSISTEMA LYNX</p><h1>Integrações</h1><p className="muted">Conecte cada SaaS Lynx pelo contrato único de provisionamento.</p></div><span className="count-badge">{integrations.length.toString().padStart(2, "0")} sistemas</span></div>
     {params.erro && <p className="error-banner" role="alert">{params.erro === "conexao" ? "Não conseguimos validar o contrato do SaaS. Confira o endereço da API e a API key." : params.erro === "app-url" ? "Informe uma URL HTTPS válida para abrir o painel do SaaS." : params.erro === "chave" ? "A nova chave não tem acesso ao contrato do SaaS ou a conexão falhou." : params.erro === "rotacao" ? "Informe uma chave válida para uma integração ativa." : params.erro === "nao-encontrada" ? "A integração não existe ou já foi revogada." : params.erro === "revogada" ? "Uma chave revogada não pode ser ativada novamente; cadastre uma nova integração." : params.erro === "https" || params.erro === "url" ? "Use uma URL HTTPS válida, sem usuário, senha, query ou fragmento." : params.erro === "duplicada" ? "Já existe um SaaS com esse nome. Escolha outro nome." : "Confira os campos obrigatórios e tente novamente."}</p>}

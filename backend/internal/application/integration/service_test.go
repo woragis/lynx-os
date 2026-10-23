@@ -102,6 +102,12 @@ func (fakeIntegrationRepository) ReplaceSecret(context.Context, string, domain.S
 func (fakeIntegrationRepository) Revoke(context.Context, string) (domain.Record, error) {
 	return domain.Record{}, nil
 }
+func (fakeIntegrationRepository) UpdateMetadata(context.Context, string, domain.Record) (domain.Record, error) {
+	return domain.Record{}, nil
+}
+func (fakeIntegrationRepository) SetActive(context.Context, string, bool) (domain.Record, error) {
+	return domain.Record{}, nil
+}
 
 type fakeCipher struct{}
 
@@ -162,4 +168,20 @@ func (f *fakeOperationRepository) FailProvisioning(_ context.Context, id string,
 func (f *fakeOperationRepository) WriteAudit(_ context.Context, audit domain.AuditEntry) error {
 	f.audits = append(f.audits, audit)
 	return nil
+}
+func (f *fakeOperationRepository) FindProvisioning(_ context.Context, integrationID, key string) (domain.ProvisioningRecord, error) {
+	item, ok := f.records[integrationID+":"+key]
+	if !ok {
+		return domain.ProvisioningRecord{}, domain.ErrIntegrationNotFound
+	}
+	return item, nil
+}
+func (f *fakeOperationRepository) ListProvisioning(_ context.Context, integrationID string, _ int) ([]domain.ProvisioningRecord, error) {
+	items := []domain.ProvisioningRecord{}
+	for _, item := range f.records {
+		if item.IntegrationID == integrationID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }

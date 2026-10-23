@@ -1,9 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createServer, type Server } from "node:http";
-import { once } from "node:events";
-import { encryptSecret } from "@/lib/server/crypto";
-import { db } from "@/lib/server/db";
-import { executeProvisioning, type BootstrapPayload } from "@/lib/server/provisioning";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/headers", () => ({ cookies: async () => ({
+  getAll: () => [{ name: "lynx_access", value: "session-cookie" }, { name: "lynx_csrf", value: "csrf-cookie" }],
+  get: (name: string) => name === "lynx_csrf" ? { value: "csrf-cookie" } : undefined,
+}) }));
+
+import { executeOperation, executeProvisioning, type BootstrapPayload } from "@/lib/server/provisioning";
 
 const payload: BootstrapPayload = {
   contractVersion: "1", operation: "bootstrap",
@@ -14,94 +16,36 @@ const payload: BootstrapPayload = {
   },
 };
 
-let server: Server;
-let baseUrl: string;
-let postCount = 0;
-let nextPostStatus = 201;
-let responseBody: unknown;
-const apiKey = "api-key-de-integracao";
+afterEach(() => { vi.unstubAllGlobals(); });
 
-beforeAll(async () => {
-  process.env.LYNX_ENCRYPTION_KEY = "c".repeat(64);
-  server = createServer(async (request, response) => {
-    if (request.headers["x-lynx-api-key"] !== apiKey) {
-      response.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
-      return;
-    }
-    if (request.method === "GET") {
-      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ contractVersion: "1" }));
-      return;
-    }
-    postCount += 1;
-    let body = "";
-    for await (const chunk of request) body += chunk;
-    responseBody = JSON.parse(body);
-    response.writeHead(nextPostStatus, { "content-type": "application/json" }).end(JSON.stringify({ id: "tenant-1", received: true }));
-  });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Servidor de teste sem porta.");
-  baseUrl = `http://127.0.0.1:${address.port}`;
-});
+describe("adaptador Next para a API Go", () => {
+  it("envia bootstrap e idempotência ao Go e traduz a resposta do contrato", async () => {
+    process.env.LYNX_GO_INTERNAL_URL = "http://lynx-go.test/";
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(String(_url)).toBe("http://lynx-go.test/api/v1/integrations/saas-1/operations");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("cookie")).toContain("lynx_access=session-cookie");
+      expect(headers.get("x-csrf-token")).toBe("csrf-cookie");
+      expect(headers.get("idempotency-key")).toBe("request-key-001");
+      expect(JSON.parse(String(init?.body))).toEqual({ operation: "bootstrap", input: payload.input });
+      return Response.json({ data: { contractVersion: "1", status: "completed", data: { data: { id: "tenant-1", login: { url: "https://easybill.test/login", email: "ana@aurora.test" } } } } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
-afterAll(async () => {
-  await db.$disconnect();
-  server.close();
-});
-
-beforeEach(async () => {
-  await db.auditLog.deleteMany();
-  await db.provisioningRecord.deleteMany();
-  await db.integration.deleteMany();
-  postCount = 0;
-  nextPostStatus = 201;
-  responseBody = undefined;
-});
-
-async function createIntegration(active = true) {
-  const encrypted = encryptSecret(apiKey);
-  return db.integration.create({ data: {
-    name: "EasyBill", slug: "easybill", baseUrl,
-    encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag, active,
-  } });
-}
-
-describe("executeProvisioning com SQLite e SaaS HTTP de teste", () => {
-  it("consulta capacidades, envia contrato e protege o resultado idempotente", async () => {
-    const integration = await createIntegration();
-    const result = await executeProvisioning(integration.id, payload, "request-success-1");
-    const repeated = await executeProvisioning(integration.id, payload, "request-success-1");
-
-    expect(result).toEqual({ status: "COMPLETED", body: { id: "tenant-1", received: true } });
-    expect(repeated).toEqual(result);
-    expect(postCount).toBe(1);
-    expect(responseBody).toEqual(payload);
-    expect(await db.auditLog.count()).toBe(1);
-    const record = await db.provisioningRecord.findUniqueOrThrow({ where: { idempotencyKey: "request-success-1" } });
-    expect(record.responseCiphertext).not.toContain("tenant-1");
+    const result = await executeProvisioning("saas-1", payload, "request-key-001");
+    expect(result).toEqual({ status: "COMPLETED", body: { data: { id: "tenant-1", login: { url: "https://easybill.test/login", email: "ana@aurora.test" } } } });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("impede reutilizar idempotency key com outro payload", async () => {
-    const integration = await createIntegration();
-    await executeProvisioning(integration.id, payload, "request-conflict-1");
-    await expect(executeProvisioning(integration.id, { ...payload, input: { ...payload.input, account: { ...payload.input.account, name: "Outro" } } }, "request-conflict-1"))
-      .rejects.toThrow(/Idempotency-Key já foi usada/);
-    expect(postCount).toBe(1);
-  });
-
-  it("não faz chamadas para integrações pausadas", async () => {
-    const integration = await createIntegration(false);
-    await expect(executeProvisioning(integration.id, payload, "request-paused-1")).rejects.toThrow(/pausada/);
-    expect(postCount).toBe(0);
-  });
-
-  it("marca falha transitória para permitir retry com a mesma chave", async () => {
-    const integration = await createIntegration();
-    nextPostStatus = 503;
-    const result = await executeProvisioning(integration.id, payload, "request-retry-1");
-    expect(result.status).toBe("RETRYABLE");
-    expect(await db.provisioningRecord.findUniqueOrThrow({ where: { idempotencyKey: "request-retry-1" } }).then((record) => record.status)).toBe("RETRYABLE");
-    expect(await db.auditLog.findFirstOrThrow()).toMatchObject({ result: "RETRYABLE_HTTP_503" });
+  it("encaminha operações de gestão sem acesso local ao SQLite", async () => {
+    process.env.LYNX_GO_INTERNAL_URL = "http://lynx-go.test";
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("idempotency-key")).toBe("resource-update-01");
+      expect(JSON.parse(String(init?.body))).toEqual({ operation: "resource.update", input: { resourceType: "customer", resourceId: "c-1", accountId: "a-1", changes: { tradeName: "Novo nome" } } });
+      return Response.json({ data: { status: "completed", data: { data: { id: "c-1", state: "updated" } } } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await executeOperation("saas-1", "resource.update", { resourceType: "customer", resourceId: "c-1", accountId: "a-1", changes: { tradeName: "Novo nome" } }, "resource-update-01");
+    expect(result).toEqual({ status: "COMPLETED", body: { data: { id: "c-1", state: "updated" } } });
   });
 });

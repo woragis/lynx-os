@@ -1,14 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
-import { resolve } from "node:path";
-
-process.env.DATABASE_URL ??= `file:${resolve(".test/lynx-os-e2e.db")}`;
-process.env.LYNX_ENCRYPTION_KEY ??= "d".repeat(64);
+import { existsSync } from "node:fs";
+const systemChromium = "/usr/bin/chromium";
 process.env.LYNX_GO_API_URL ??= "http://127.0.0.1:8182";
 process.env.LYNX_GO_INTERNAL_URL ??= "http://127.0.0.1:8182";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  globalSetup: "./tests/e2e-global-setup.ts",
   fullyParallel: false,
   retries: 0,
   reporter: "list",
@@ -16,8 +13,8 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL: "http://127.0.0.1:3100",
     headless: true,
-    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || existsSync(systemChromium)
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || systemChromium }
       : {},
   },
   webServer: [
@@ -33,8 +30,6 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
       env: {
-        DATABASE_URL: process.env.DATABASE_URL,
-        LYNX_ENCRYPTION_KEY: process.env.LYNX_ENCRYPTION_KEY,
         LYNX_GO_API_URL: process.env.LYNX_GO_API_URL,
         LYNX_GO_INTERNAL_URL: process.env.LYNX_GO_INTERNAL_URL,
       },

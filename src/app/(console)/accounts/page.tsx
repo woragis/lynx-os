@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { manageResourceAction, retryResourceAction } from "@/app/actions";
-import { decryptSecret } from "@/lib/server/crypto";
-import { db } from "@/lib/server/db";
-import { discoverCapabilities, listResources, type ContractCapabilities } from "@/lib/server/provisioning";
+import { discoverCapabilities, getOperation, listIntegrations, listResources, type ContractCapabilities } from "@/lib/server/provisioning";
+import { requireSession } from "@/lib/server/session";
 
 type SearchParams = Promise<Record<string, string | undefined>>;
 type Resource = Record<string, unknown> & { id: string; resourceType: string; lifecycle?: Record<string, unknown> };
@@ -52,7 +51,8 @@ function resultSummary(value: unknown) {
 
 export default async function AccountsPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
-  const integrations = await db.integration.findMany({ where: { active: true, revokedAt: null }, orderBy: { name: "asc" }, select: { id: true, name: true, appUrl: true } });
+  await requireSession();
+  const integrations = (await listIntegrations()).filter((item) => item.active && !item.revokedAt).map(({ id, name, appUrl }) => ({ id, name, appUrl: appUrl || null }));
   const integrationId = params.integrationId && integrations.some((item) => item.id === params.integrationId)
     ? params.integrationId
     : integrations[0]?.id ?? "";
@@ -62,7 +62,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
   let items: Resource[] = [];
   let accounts: Resource[] = [];
   let nextCursor: string | null = null;
-  let requestRecord: { status: string; responseCiphertext: string | null; responseIv: string | null; responseAuthTag: string | null } | null = null;
+  let requestRecord: { status: string; response: unknown } | null = null;
   let requestResult: unknown = null;
   let listError = "";
 
@@ -89,12 +89,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
   }
 
   if (params.request) {
-    requestRecord = await db.provisioningRecord.findUnique({ where: { idempotencyKey: params.request }, select: { status: true, responseCiphertext: true, responseIv: true, responseAuthTag: true } });
-    try {
-      if (requestRecord?.responseCiphertext && requestRecord.responseIv && requestRecord.responseAuthTag) {
-        requestResult = JSON.parse(decryptSecret(requestRecord.responseCiphertext, requestRecord.responseIv, requestRecord.responseAuthTag));
-      }
-    } catch { requestResult = null; }
+    try { const operation = await getOperation(integrationId, params.request); requestRecord = { status: operation.status.toUpperCase(), response: operation.response }; const response = operation.response as { data?: unknown } | undefined; requestResult = response?.data ?? null; }
+    catch { requestRecord = null; }
   }
 
   const resourceCapabilities = capabilities?.resources[resourceType];
@@ -114,7 +110,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Sea
 
     {params.erro && <p className="error-banner" role="alert">{params.erro === "confirmacao" ? "Digite PURGAR exatamente para confirmar a exclusão permanente." : params.erro === "integracao" ? "A operação não foi concluída. Confira a integração e tente novamente." : "Não foi possível executar essa solicitação. Confira os dados e tente de novo."}</p>}
     {params.result && <p className={params.result === "COMPLETED" ? "success-banner" : "error-banner"}>{params.result === "COMPLETED" ? "Alteração concluída no SaaS." : `Solicitação ${params.result.toLocaleLowerCase()}. Consulte o resultado abaixo.`}</p>}
-    {requestRecord && <section className="manager-result"><div><strong>{requestRecord.status === "RETRYABLE" ? "Aguardando nova tentativa" : requestRecord.status === "COMPLETED" ? "Resultado da solicitação" : "O SaaS devolveu uma validação"}</strong><p>{requestRecord.status === "RETRYABLE" ? "O SaaS não confirmou a conclusão. A mesma solicitação pode ser reenviada sem duplicar a operação." : resultSummary(requestResult)}</p></div>{requestRecord.status === "RETRYABLE" && <form action={retryResourceAction}><input type="hidden" name="idempotencyKey" value={params.request} /><button className="quiet-button" type="submit">Tentar novamente</button></form>}</section>}
+    {requestRecord && <section className="manager-result"><div><strong>{requestRecord.status === "FAILED" ? "Aguardando nova tentativa" : requestRecord.status === "COMPLETED" ? "Resultado da solicitação" : "O SaaS devolveu uma validação"}</strong><p>{requestRecord.status === "FAILED" ? "O SaaS não confirmou a conclusão. A mesma solicitação pode ser reenviada sem duplicar a operação." : resultSummary(requestResult)}</p></div>{requestRecord.status === "FAILED" && <form action={retryResourceAction}><input type="hidden" name="idempotencyKey" value={params.request} /><input type="hidden" name="integrationId" value={integrationId} /><input type="hidden" name="resourceType" value={resourceType} /><input type="hidden" name="accountId" value={params.accountId ?? ""} /><button className="quiet-button" type="submit">Tentar novamente</button></form>}</section>}
 
     {integrations.length === 0 ? <div className="empty-state manager-empty"><span className="empty-mark">◈</span><h2>Conecte um SaaS para começar</h2><p>Depois da conexão, os registros disponíveis aparecem aqui.</p><Link className="button button-dark" href="/integrations">Configurar SaaS ↗</Link></div> : <>
       {listError && <p className="error-banner" role="alert">{listError}</p>}

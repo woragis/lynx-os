@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -36,7 +37,16 @@ type CreateInput struct {
 	Name    string
 	Slug    string
 	BaseURL string
+	AppURL  string
 	APIKey  string
+}
+
+type OperationView struct {
+	IdempotencyKey string          `json:"idempotencyKey"`
+	Status         string          `json:"status"`
+	Operation      string          `json:"operation"`
+	RequestID      string          `json:"requestId"`
+	Response       json.RawMessage `json:"response,omitempty"`
 }
 
 func NewService(repository domain.Repository, operations domain.OperationRepository, cipher domain.SecretCipher, contract *ContractService) *Service {
@@ -47,8 +57,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Record,
 	input.Name = strings.TrimSpace(input.Name)
 	input.Slug = strings.TrimSpace(input.Slug)
 	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	input.AppURL = strings.TrimSpace(input.AppURL)
 	input.APIKey = strings.TrimSpace(input.APIKey)
-	if input.Name == "" || len(input.Name) > 120 || !slugPattern.MatchString(input.Slug) || len(input.Slug) > 80 || strings.TrimSpace(input.APIKey) == "" {
+	if input.Name == "" || len(input.Name) > 120 || !slugPattern.MatchString(input.Slug) || len(input.Slug) > 80 || strings.TrimSpace(input.APIKey) == "" || !validURL(input.BaseURL) || !validOptionalURL(input.AppURL) {
 		return domain.Record{}, ErrInvalidIntegration
 	}
 	if _, err := s.contract.Discover(ctx, input.BaseURL, input.APIKey); err != nil {
@@ -64,9 +75,111 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Record,
 	}
 	now := time.Now().UTC()
 	return s.repository.Create(ctx, domain.Record{
-		ID: id, Name: input.Name, Slug: input.Slug, BaseURL: input.BaseURL,
+		ID: id, Name: input.Name, Slug: input.Slug, BaseURL: input.BaseURL, AppURL: input.AppURL,
 		Active: true, CreatedAt: now, UpdatedAt: now,
 	}, sealed)
+}
+
+func (s *Service) Update(ctx context.Context, id string, input CreateInput) (domain.Record, error) {
+	current, sealed, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return domain.Record{}, err
+	}
+	if current.RevokedAt != nil {
+		return domain.Record{}, ErrIntegrationRevoked
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.Slug = strings.TrimSpace(input.Slug)
+	input.BaseURL = strings.TrimSpace(input.BaseURL)
+	input.AppURL = strings.TrimSpace(input.AppURL)
+	if input.Name == "" || len(input.Name) > 120 || !slugPattern.MatchString(input.Slug) || len(input.Slug) > 80 || !validURL(input.BaseURL) || !validOptionalURL(input.AppURL) {
+		return domain.Record{}, ErrInvalidIntegration
+	}
+	key, err := s.cipher.Decrypt(sealed)
+	if err != nil {
+		return domain.Record{}, err
+	}
+	if _, err = s.contract.Discover(ctx, input.BaseURL, string(key)); err != nil {
+		return domain.Record{}, fmt.Errorf("%w: %v", ErrSaaSValidation, err)
+	}
+	return s.repository.UpdateMetadata(ctx, id, domain.Record{Name: input.Name, Slug: input.Slug, BaseURL: input.BaseURL, AppURL: input.AppURL})
+}
+
+func (s *Service) SetActive(ctx context.Context, id string, active bool) (domain.Record, error) {
+	item, sealed, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return domain.Record{}, err
+	}
+	if item.RevokedAt != nil {
+		return domain.Record{}, ErrIntegrationRevoked
+	}
+	if active {
+		if _, err = s.cipher.Decrypt(sealed); err != nil {
+			return domain.Record{}, err
+		}
+	}
+	return s.repository.SetActive(ctx, id, active)
+}
+
+func (s *Service) GetOperation(ctx context.Context, integrationID, key string) (OperationView, error) {
+	record, err := s.operations.FindProvisioning(ctx, integrationID, key)
+	if err != nil {
+		return OperationView{}, err
+	}
+	view := OperationView{IdempotencyKey: record.IdempotencyKey, Status: record.Status, Operation: record.Operation, RequestID: record.RequestID}
+	if record.Response != nil {
+		plain, err := s.cipher.Decrypt(*record.Response)
+		if err != nil {
+			return OperationView{}, err
+		}
+		view.Response = plain
+	}
+	return view, nil
+}
+
+func (s *Service) ListOperations(ctx context.Context, integrationID string, limit int) ([]OperationView, error) {
+	records, err := s.operations.ListProvisioning(ctx, integrationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]OperationView, 0, len(records))
+	for _, record := range records {
+		view := OperationView{IdempotencyKey: record.IdempotencyKey, Status: record.Status, Operation: record.Operation, RequestID: record.RequestID}
+		if record.Response != nil {
+			plain, err := s.cipher.Decrypt(*record.Response)
+			if err != nil {
+				return nil, err
+			}
+			view.Response = plain
+		}
+		views = append(views, view)
+	}
+	return views, nil
+}
+
+func (s *Service) RetryOperation(ctx context.Context, integrationID, actorID, requestID, key string) (domain.Response, error) {
+	record, err := s.operations.FindProvisioning(ctx, integrationID, key)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	plain, err := s.cipher.Decrypt(record.Payload)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	var command domain.Command
+	if err := json.Unmarshal(plain, &command); err != nil {
+		return domain.Response{}, err
+	}
+	return s.Execute(ctx, integrationID, actorID, requestID, command, key)
+}
+
+func validOptionalURL(value string) bool { return value == "" || validURL(value) }
+func validURL(value string) bool {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return parsed.Scheme == "https" || (parsed.Scheme == "http" && parsed.Hostname() == "localhost")
 }
 
 func (s *Service) List(ctx context.Context) ([]domain.Record, error) {

@@ -2,9 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { db } from "@/lib/server/db";
-import { decryptSecret, encryptSecret } from "@/lib/server/crypto";
-import { discoverCapabilities, executeProvisioning, executeOperation, type BootstrapPayload, type ContractCapabilities } from "@/lib/server/provisioning";
+import { lynxApi } from "@/lib/server/lynx-api";
+import { discoverCapabilities, executeProvisioning, executeOperation, listIntegrations, type BootstrapPayload, type ContractCapabilities } from "@/lib/server/provisioning";
 
 const BootstrapFormSchema = z.object({
   integrationId: z.string().min(1),
@@ -37,20 +36,10 @@ export async function addIntegrationAction(formData: FormData) {
   }
 
   const slug = name.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const encrypted = encryptSecret(apiKey);
-  let probe: Response;
   try {
-    probe = await fetch(`${baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
-  } catch (error) {
-    if (error && typeof error === "object" && "digest" in error) throw error;
-    redirect("/integrations?erro=conexao");
-  }
-  const capabilities = await probe.json().catch(() => null) as { contractVersion?: string } | null;
-  if (!probe.ok || capabilities?.contractVersion !== "1") redirect("/integrations?erro=conexao");
-  try {
-    await db.integration.create({ data: { name, slug, baseUrl, appUrl: appUrl || null, encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag } });
+    await lynxApi("/integrations", { method: "POST", body: JSON.stringify({ name, slug, baseUrl, appUrl, apiKey }) });
   } catch {
-    redirect("/integrations?erro=duplicada");
+    redirect("/integrations?erro=conexao");
   }
   redirect("/integrations?salvo=1");
 }
@@ -70,48 +59,30 @@ export async function editIntegrationAction(formData: FormData) {
     try { app = new URL(appUrl); } catch { redirect("/integrations?erro=app-url"); }
     if ((app.protocol !== "https:" && app.hostname !== "localhost") || app.username || app.password || app.search || app.hash) redirect("/integrations?erro=app-url");
   }
-  const existing = await db.integration.findUnique({ where: { id } });
-  if (!existing || existing.revokedAt) redirect("/integrations?erro=nao-encontrada");
   try {
-    const apiKey = decryptSecret(existing.encryptedApiKey, existing.apiKeyIv, existing.apiKeyAuthTag);
-    const response = await fetch(`${baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
-    const capabilities = await response.json().catch(() => null) as { contractVersion?: string } | null;
-    if (!response.ok || capabilities?.contractVersion !== "1") redirect("/integrations?erro=conexao");
-  } catch (error) {
-    if (error && typeof error === "object" && "digest" in error) throw error;
+    const slug = name.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    await lynxApi(`/integrations/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ name, slug, baseUrl, appUrl }) });
+  } catch {
     redirect("/integrations?erro=conexao");
   }
-  const slug = name.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  try {
-    await db.integration.update({ where: { id }, data: { name, slug, baseUrl, appUrl: appUrl || null } });
-  } catch {
-    redirect("/integrations?erro=duplicada");
-  }
-  await db.auditLog.create({ data: { action: "integration.update-metadata", integrationId: id, result: "COMPLETED" } });
   redirect("/integrations?atualizado=1");
 }
 
 export async function toggleIntegrationAction(formData: FormData) {
   await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
-  const integration = await db.integration.findUnique({ where: { id }, select: { active: true, revokedAt: true } });
+  const integration = (await listIntegrations()).find((item) => item.id === id);
   if (!integration) redirect("/integrations?erro=nao-encontrada");
-  if (integration.revokedAt) redirect("/integrations?erro=revogada");
-  await db.integration.update({ where: { id }, data: { active: !integration.active } });
-  await db.auditLog.create({ data: { action: integration.active ? "integration.pause" : "integration.activate", integrationId: id, result: "COMPLETED" } });
+  try { await lynxApi(`/integrations/${encodeURIComponent(id)}/active`, { method: "PATCH", body: JSON.stringify({ active: !integration.active }) }); }
+  catch { redirect("/integrations?erro=revogada"); }
   redirect("/integrations?atualizado=1");
 }
 
 export async function revokeIntegrationAction(formData: FormData) {
   await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
-  const integration = await db.integration.findUnique({ where: { id }, select: { revokedAt: true } });
-  if (!integration) redirect("/integrations?erro=nao-encontrada");
-  if (integration.revokedAt) redirect("/integrations?revogada=1");
-  await db.$transaction([
-    db.integration.update({ where: { id }, data: { active: false, encryptedApiKey: "", apiKeyIv: "", apiKeyAuthTag: "", revokedAt: new Date() } }),
-    db.auditLog.create({ data: { action: "integration.revoke-local-key", integrationId: id, result: "COMPLETED" } }),
-  ]);
+  try { await lynxApi(`/integrations/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+  catch { redirect("/integrations?erro=nao-encontrada"); }
   redirect("/integrations?revogada=1");
 }
 
@@ -119,19 +90,12 @@ export async function rotateIntegrationKeyAction(formData: FormData) {
   await requireRoles(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
   const apiKey = String(formData.get("apiKey") ?? "").trim();
-  const integration = await db.integration.findUnique({ where: { id } });
-  if (!integration || integration.revokedAt || !apiKey) redirect("/integrations?erro=rotacao");
+  if (!id || !apiKey) redirect("/integrations?erro=rotacao");
   try {
-    const response = await fetch(`${integration.baseUrl}/api/v1/provisioning`, { headers: { "X-Lynx-API-Key": apiKey }, cache: "no-store", signal: AbortSignal.timeout(12000) });
-    const capabilities = await response.json().catch(() => null) as { contractVersion?: string } | null;
-    if (!response.ok || capabilities?.contractVersion !== "1") redirect("/integrations?erro=chave");
-  } catch (error) {
-    if (error && typeof error === "object" && "digest" in error) throw error;
+    await lynxApi(`/integrations/${encodeURIComponent(id)}/api-key`, { method: "PUT", body: JSON.stringify({ apiKey }) });
+  } catch {
     redirect("/integrations?erro=chave");
   }
-  const encrypted = encryptSecret(apiKey);
-  await db.integration.update({ where: { id }, data: { encryptedApiKey: encrypted.ciphertext, apiKeyIv: encrypted.iv, apiKeyAuthTag: encrypted.authTag } });
-  await db.auditLog.create({ data: { action: "integration.rotate-key", integrationId: id, result: "COMPLETED" } });
   redirect("/integrations?rotacionada=1");
 }
 
@@ -157,7 +121,7 @@ export async function provisionAction(formData: FormData) {
   if (!idempotencyKey) redirect("/provisioning?erro=idempotencia");
   try {
     await executeProvisioning(integrationId, payload, idempotencyKey);
-    redirect(`/provisioning?request=${encodeURIComponent(idempotencyKey)}`);
+    redirect(`/provisioning?integrationId=${encodeURIComponent(integrationId)}&request=${encodeURIComponent(idempotencyKey)}`);
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     redirect(`/provisioning?erro=conexao&request=${encodeURIComponent(idempotencyKey)}`);
@@ -167,12 +131,11 @@ export async function provisionAction(formData: FormData) {
 export async function retryProvisionAction(formData: FormData) {
   await requireRoles(["owner", "admin", "operator"]);
   const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
-  const record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
-  if (!record || record.status !== "RETRYABLE") redirect("/provisioning?erro=solicitacao");
+  const integrationId = String(formData.get("integrationId") ?? "");
+  if (!integrationId || !idempotencyKey) redirect("/provisioning?erro=solicitacao");
   try {
-    const payload = decryptSecret(record.payloadCiphertext, record.payloadIv, record.payloadAuthTag);
-    await executeProvisioning(record.integrationId, JSON.parse(payload) as BootstrapPayload, idempotencyKey);
-    redirect(`/provisioning?request=${encodeURIComponent(idempotencyKey)}`);
+    await lynxApi(`/integrations/${encodeURIComponent(integrationId)}/operations/${encodeURIComponent(idempotencyKey)}/retry`, { method: "POST", body: "{}" });
+    redirect(`/provisioning?integrationId=${encodeURIComponent(integrationId)}&request=${encodeURIComponent(idempotencyKey)}`);
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     redirect(`/provisioning?erro=conexao&request=${encodeURIComponent(idempotencyKey)}`);
@@ -225,15 +188,13 @@ export async function manageResourceAction(formData: FormData) {
 export async function retryResourceAction(formData: FormData) {
   await requireRoles(["owner", "admin", "operator"]);
   const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
-  const record = await db.provisioningRecord.findUnique({ where: { idempotencyKey } });
-  if (!record || record.status !== "RETRYABLE") redirect("/accounts?erro=solicitacao");
+  const integrationId = String(formData.get("integrationId") ?? "");
+  if (!integrationId || !idempotencyKey) redirect("/accounts?erro=solicitacao");
   try {
-    const payload = JSON.parse(decryptSecret(record.payloadCiphertext, record.payloadIv, record.payloadAuthTag)) as { operation?: string; input?: Record<string, unknown> };
-    if (!payload.operation || !payload.input) redirect("/accounts?erro=solicitacao");
-    await executeOperation(record.integrationId, payload.operation, payload.input, idempotencyKey);
-    const resourceType = String(payload.input.resourceType ?? "account");
-    const accountId = String(payload.input.accountId ?? "");
-    redirect(resourceLocation({ integrationId: record.integrationId, resourceType, accountId, request: idempotencyKey }));
+    await lynxApi(`/integrations/${encodeURIComponent(integrationId)}/operations/${encodeURIComponent(idempotencyKey)}/retry`, { method: "POST", body: "{}" });
+    const resourceType = String(formData.get("resourceType") ?? "account");
+    const accountId = String(formData.get("accountId") ?? "");
+    redirect(resourceLocation({ integrationId, resourceType, accountId, request: idempotencyKey }));
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     redirect("/accounts?erro=integracao");
