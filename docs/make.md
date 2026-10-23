@@ -1,0 +1,54 @@
+# Desenvolvimento local com Make
+
+O Makefile na raiz centraliza o ambiente de desenvolvimento do Lynx OS. Execute os comandos na raiz do repositório; não é necessário informar portas nem caminhos.
+
+## Primeiro uso
+
+```sh
+make setup
+make owner
+make up
+```
+
+`make setup` cria `backend/.env` e `web/.env` a partir dos exemplos quando ainda não existem. Na primeira criação do ambiente Go, gera as chaves locais de sessão e de cifragem. Também verifica as ferramentas e instala as dependências do frontend quando necessário.
+
+Se algum `.env` já existir, o setup cria uma cópia em `.local/backups/env/<data-e-hora>/` e preserva o arquivo original sem alterar seus valores. Os arquivos de ambiente e os backups são locais, têm permissão restrita e não entram no Git. O setup não gera nem substitui tokens do Telegram ou da OpenAI; esses serviços são opcionais.
+
+`make owner` aplica as migrations e abre o fluxo interativo para criar o primeiro owner. Se o banco ainda não tiver um owner, faça esse passo antes de iniciar a aplicação.
+
+## Comandos do dia a dia
+
+| Comando | O que faz |
+| --- | --- |
+| `make up` | Sobe PostgreSQL, Redis e Mailpit, aplica migrations e inicia API e frontend em background. |
+| `make down` | Encerra os processos iniciados pelo Make e os containers; preserva os volumes do banco. |
+| `make status` | Mostra PIDs, containers e URLs locais. |
+| `make logs` | Acompanha os arquivos `.local/logs/api.log` e `web.log`; use `Ctrl+C` para sair. |
+| `make doctor` | Confere Make, Docker/Compose, Go, Node/npm, OpenSSL, `psql` e `curl`. |
+| `make migrate` | Sobe a infraestrutura e aplica migrations sem iniciar as aplicações. |
+| `make env-backup` | Faz backup dos `.env` existentes sem modificá-los. |
+| `make infra-up` / `make infra-down` | Controla apenas os containers locais. |
+| `make api` / `make web` | Executa uma aplicação em primeiro plano para desenvolvimento isolado. |
+
+URLs padrão:
+
+- Aplicação: <http://localhost:3100>
+- API Go: <http://localhost:8082>
+- Saúde da API: <http://localhost:8082/health/ready>
+- Mailpit: <http://localhost:8025>
+- PostgreSQL: `localhost:5433`
+- Redis: `localhost:6380`
+
+O comando `make down` não usa `docker compose down -v`; os dados PostgreSQL permanecem no volume `lynx_postgres`. Para apagar dados, remova volumes Docker deliberadamente fora do fluxo normal de encerramento.
+
+## Telegram e OpenAI
+
+O worker do Telegram executa dentro do processo da API Go. Para ativá-lo, configure `TELEGRAM_BOT_TOKEN` em `backend/.env`. Para habilitar interpretação de mensagens naturais, configure também `OPENAI_API_KEY`. Depois, reinicie com `make down` e `make up`. Sem esses valores, API e frontend continuam funcionando e o bot permanece desativado.
+
+## Resolução de problemas
+
+- Se um serviço não responder durante `make up`, consulte `make status` e `make logs`.
+- Se Docker estiver parado, inicie o daemon e execute `make up` novamente.
+- Se as variáveis já configuradas precisarem ser revisadas, edite os arquivos `.env` diretamente; `make setup` preserva valores existentes.
+- Para restaurar um backup, pare os serviços, copie o arquivo desejado de `.local/backups/env/` de volta ao caminho correspondente e restrinja as permissões (`chmod 600`). Não substitua uma chave de cifragem se já houver dados cifrados no banco.
+- `make down` para os processos pelos PIDs registrados em `.local/run/`; se um PID tiver sido reutilizado por outro programa, o script verifica a linha de comando antes de enviar sinal.

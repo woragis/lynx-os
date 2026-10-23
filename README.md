@@ -8,6 +8,10 @@ Central de operações da Lynx para integrar SaaS e administrar empresas/contas,
 - <code>backend/</code>: API Go, worker Telegram integrado, migrations, scripts e arquivos legados preservados.
 - <code>docs/</code>: arquitetura, contrato SaaS v1 e operação.
 
+## Início rápido
+
+Use o Makefile da raiz para preparar e controlar o ambiente local. No primeiro uso, execute <code>make setup</code>, crie o owner com <code>make owner</code> e inicie os serviços com <code>make up</code>. Acesse <code>http://localhost:3100</code>; Mailpit fica em <code>http://localhost:8025</code>. Para encerrar sem apagar os dados do banco, execute <code>make down</code>. Consulte <code>docs/make.md</code> para todos os comandos e detalhes dos arquivos de ambiente.
+
 ## Desenvolvimento web
 
     cd web
