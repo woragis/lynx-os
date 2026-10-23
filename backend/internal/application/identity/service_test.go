@@ -363,3 +363,9 @@ func (r *fakeRepository) ConsumeTelegramLinkCode(_ context.Context, codeHash, te
 	r.telegramLinkedUserID = telegramUserID
 	return nil
 }
+func (r *fakeRepository) FindByTelegramUserID(_ context.Context, telegramUserID string) (domain.User, error) {
+	if telegramUserID == r.telegramLinkedUserID {
+		return domain.User{ID: "owner-1", Role: domain.RoleOwner, Active: true}, nil
+	}
+	return domain.User{}, domain.ErrUserNotFound
+}

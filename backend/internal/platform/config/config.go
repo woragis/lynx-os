@@ -19,6 +19,9 @@ type Config struct {
 	SMTPPort              int    `env:"SMTP_PORT" envDefault:"1025"`
 	SMTPFrom              string `env:"SMTP_FROM" envDefault:"Lynx OS <no-reply@lynx.local>"`
 	TelegramInternalToken string `env:"LYNX_TELEGRAM_INTERNAL_TOKEN"`
+	TelegramBotToken      string `env:"TELEGRAM_BOT_TOKEN"`
+	OpenAIAPIKey          string `env:"OPENAI_API_KEY"`
+	OpenAIModel           string `env:"OPENAI_MODEL" envDefault:"gpt-6-luna"`
 }
 
 func Load() (Config, error) {

@@ -123,6 +123,7 @@ type Repository interface {
 	UpdateAdmin(context.Context, string, string, Role, bool) (AdminSummary, error)
 	CreateTelegramLinkCode(context.Context, string, string, string, time.Time) error
 	ConsumeTelegramLinkCode(context.Context, string, string) error
+	FindByTelegramUserID(context.Context, string) (User, error)
 }
 
 type PasswordResetMailer interface {

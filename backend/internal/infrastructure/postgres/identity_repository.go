@@ -393,6 +393,16 @@ func (r *IdentityRepository) ConsumeTelegramLinkCode(ctx context.Context, tokenH
 	return tx.Commit(ctx)
 }
 
+func (r *IdentityRepository) FindByTelegramUserID(ctx context.Context, telegramUserID string) (domain.User, error) {
+	var user domain.User
+	err := r.pool.QueryRow(ctx, `SELECT u.id,u.email,u.password_hash,u.display_name,u.role,u.active,u.created_at,u.last_login_at
+		FROM telegram_identities t JOIN admin_users u ON u.id=t.user_id
+		WHERE t.telegram_user_id=$1 AND u.active=true`, telegramUserID).
+		Scan(&user.ID,&user.Email,&user.PasswordHash,&user.DisplayName,&user.Role,&user.Active,&user.CreatedAt,&user.LastLoginAt)
+	if errors.Is(err, pgx.ErrNoRows) { return domain.User{}, domain.ErrUserNotFound }
+	return user,err
+}
+
 func randomTextID() (string, error) {
 	value := make([]byte, 16)
 	if _, err := rand.Read(value); err != nil {

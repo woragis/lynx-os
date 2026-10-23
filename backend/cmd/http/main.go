@@ -16,14 +16,17 @@ import (
 	application "github.com/lynx/lynx-os/backend/internal/application/health"
 	identityapp "github.com/lynx/lynx-os/backend/internal/application/identity"
 	integrationapp "github.com/lynx/lynx-os/backend/internal/application/integration"
+	telegramapp "github.com/lynx/lynx-os/backend/internal/application/telegram"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/health"
 	identitydomain "github.com/lynx/lynx-os/backend/internal/domain/identity"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/cryptox"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/mailgun"
+	openaiinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/openai"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/postgres"
 	redisinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/redis"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/saasclient"
 	smtpinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/smtp"
+	telegrambot "github.com/lynx/lynx-os/backend/internal/infrastructure/telegrambot"
 	healthhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/health"
 	identityhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/identity"
 	integrationhttp "github.com/lynx/lynx-os/backend/internal/interfaces/http/integration"
@@ -67,6 +70,7 @@ func main() {
 	router := httpx.NewRouter()
 	router.Mount("/health", healthhttp.NewHandler(checks).Routes())
 	var identityHandler *identityhttp.Handler
+	var identityService *identityapp.Service
 	if cfg.JWTSigningKey != "" {
 		jwtManager, jwtErr := authn.NewJWTManager([]byte(cfg.JWTSigningKey))
 		if jwtErr != nil {
@@ -87,7 +91,8 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		identityService, serviceErr := identityapp.NewService(postgres.NewIdentityRepository(db), redisinfra.NewLoginRateLimiter(redis), jwtManager, resetMailer)
+		var serviceErr error
+		identityService, serviceErr = identityapp.NewService(postgres.NewIdentityRepository(db), redisinfra.NewLoginRateLimiter(redis), jwtManager, resetMailer)
 		if serviceErr != nil {
 			logger.Error("could not initialize administrator authentication")
 			os.Exit(1)
@@ -95,6 +100,8 @@ func main() {
 		identityHandler = identityhttp.NewHandlerWithTelegram(identityService, cfg.Environment == "production", cfg.TelegramInternalToken)
 		router.Mount("/api/v1/auth", identityHandler.Routes())
 	}
+	var integrationService *integrationapp.Service
+	var cipher *cryptox.AESGCM
 	if cfg.EncryptionKey != "" {
 		if identityHandler == nil {
 			logger.Error("LYNX_JWT_SIGNING_KEY is required when enabling integration management")
@@ -105,7 +112,8 @@ func main() {
 			logger.Error("LYNX_ENCRYPTION_KEY must be 64 hexadecimal characters when enabling integration management")
 			os.Exit(1)
 		}
-		cipher, cipherErr := cryptox.NewAESGCM(key)
+		var cipherErr error
+		cipher, cipherErr = cryptox.NewAESGCM(key)
 		if cipherErr != nil {
 			logger.Error("could not initialize integration secret encryption")
 			os.Exit(1)
@@ -113,8 +121,19 @@ func main() {
 		contractClient := saasclient.NewContractV1Client(nil)
 		contractService := integrationapp.NewContractService(contractClient)
 		integrationRepository := postgres.NewIntegrationRepository(db)
-		integrationService := integrationapp.NewService(integrationRepository, integrationRepository, cipher, contractService)
+		integrationService = integrationapp.NewService(integrationRepository, integrationRepository, cipher, contractService)
 		router.Mount("/api/v1/integrations", identityHandler.ProtectedMiddleware(integrationhttp.NewHandler(integrationService).Routes()))
+	}
+	if cfg.TelegramBotToken != "" {
+		if identityService == nil || integrationService == nil || cipher == nil || cfg.OpenAIAPIKey == "" {
+			logger.Error("Telegram bot requires administrator auth, integration encryption, and OPENAI_API_KEY")
+			os.Exit(1)
+		}
+		telegramRepository := postgres.NewTelegramRepository(db)
+		telegramService := telegramapp.NewService(telegramRepository, postgres.NewIdentityRepository(db), identityService, integrationService, openaiinfra.NewDraftExtractor(cfg.OpenAIAPIKey, cfg.OpenAIModel), cipher)
+		worker := telegramapp.NewWorker(telegrambot.NewClient(cfg.TelegramBotToken), telegramService, telegramRepository, logger)
+		go worker.Run(ctx)
+		logger.Info("Telegram bot worker enabled in Go API process")
 	}
 
 	server := &http.Server{

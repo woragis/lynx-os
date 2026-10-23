@@ -14,19 +14,15 @@ Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir 
 
 ## Telegram
 
-O transporte do bot roda em um serviço dedicado em Go, em `telegram-bot/`. Ele valida o webhook do Telegram, encaminha a atualização ao endpoint interno autenticado do Next.js e envia a resposta ao chat. O Next.js segue responsável por OpenAI, conversas, allowlist e provisionamento.
+O bot agora pode rodar dentro do processo HTTP Go. Aplique a migration `000005`, configure `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `OPENAI_MODEL` e `LYNX_ENCRYPTION_KEY` em `backend/.env`, e inicie apenas `go run ./cmd/http`. Não rode simultaneamente o transporte legado (`npm run telegram:dev`), pois ambos disputariam os updates do mesmo bot. O worker usa long polling, dispensa webhook público e adquire um advisory lock PostgreSQL para manter apenas um poller ativo; conversas são cifradas no PostgreSQL.
 
-Configure `TELEGRAM_BOT_TOKEN`, `LYNX_TELEGRAM_INTERNAL_TOKEN`, `LYNX_OS_INTERNAL_URL` e `TELEGRAM_ALLOWED_USER_IDS`. Gere o token interno com pelo menos 32 caracteres aleatórios; para o vínculo de identidade, use o mesmo valor no Next.js e em `backend/.env`. Em desenvolvimento, inicie o bot com `npm run telegram:dev`. O serviço usa long polling, então não precisa de domínio ou webhook público. O bot só aceita mensagens privadas de IDs presentes na allowlist, exceto `/link CÓDIGO`, que consome um código de uso único emitido pelo Lynx OS. A IA prepara o rascunho; apenas `CONFIRMAR` autoriza o envio ao SaaS. `CANCELAR` descarta o rascunho.
-
-O fluxo e as opções de execução do processo estão em [`telegram-bot/README.md`](telegram-bot/README.md). Em produção, publique o serviço Go atrás do HTTPS do domínio e mantenha o endpoint Next.js interno na rede privada.
-
-O modelo padrão é `gpt-6-luna` e pode ser substituído por `OPENAI_MODEL`. A aplicação usa a Responses API e saída JSON estruturada. A chave de OpenAI fica em `OPENAI_API_KEY`, somente no servidor Next.js; o serviço Go não recebe essa chave.
+O uso exige conta administrativa ativa vinculada pela página Segurança e pelo comando `/link CÓDIGO`. `/start` abre o menu; a IA usa a Responses API com saída JSON estruturada para preencher o rascunho incremental e não envia mutações sem confirmação. `OPENAI_MODEL` tem padrão `gpt-6-luna`. Em desenvolvimento, o nome Telegram e a chave OpenAI ficam apenas no ambiente do backend Go. O transporte Next legado permanece no repositório durante a transição e não deve ser iniciado junto com o worker novo.
 
 ## Backend Go
 
 O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). A autenticação administrativa e gestão de integrações já usam Go, PostgreSQL e Redis. Parte das ações e leituras de produto ainda usa Next/Prisma e será migrada em etapas.
 
-Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001`, `000002` e `000003` e crie o owner com `go run ./cmd/create-admin`. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
+Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` a `000005` e crie o owner com `go run ./cmd/create-admin`. Para ativar o bot integrado, preencha `TELEGRAM_BOT_TOKEN` e `OPENAI_API_KEY` no ambiente do backend. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend. A migração dos dados SQLite e das demais rotas de negócio ainda não foi feita.
 
 ## Integrações
 
