@@ -232,6 +232,10 @@ func (s *Service) Revoke(ctx context.Context, id string) (domain.Record, error) 
 }
 
 func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, command domain.Command, idempotencyKey string) (domain.Response, error) {
+	if command.ContractVersion != "" && command.ContractVersion != "1" {
+		return domain.Response{}, ErrInvalidOperation
+	}
+	command.ContractVersion = "1"
 	item, sealed, err := s.repository.Get(ctx, id)
 	if err != nil {
 		return domain.Response{}, err

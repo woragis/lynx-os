@@ -21,7 +21,21 @@ O uso exige conta administrativa ativa vinculada pela página Segurança e pelo 
 
 O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Autenticação, integrações e operações de SaaS usam Go, PostgreSQL e Redis. O Next faz chamadas server-side à API Go e encaminha as rotas de autenticação same-origin.
 
-Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` a `000006` e crie o owner com `go run ./cmd/create-admin`. Para ativar o bot integrado, preencha `TELEGRAM_BOT_TOKEN` e `OPENAI_API_KEY` no ambiente do backend. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend. A migração dos registros já existentes no SQLite está descrita e será conduzida pelo item LNX-008 antes do descarte do arquivo.
+Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` a `000007` e crie o owner com `go run ./cmd/create-admin`. Para ativar o bot integrado, preencha `TELEGRAM_BOT_TOKEN` e `OPENAI_API_KEY` no ambiente do backend. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend.
+
+### Migração do SQLite legado
+
+O arquivo `lynx-os.db` está íntegro e foi inventariado: 1 integração, 1 conversa Telegram legada, 0 operações e 0 logs de auditoria. O importador deixa o SQLite intacto; converte a codificação das chaves AES, revalida a descriptografia, importa operações e auditoria preservando idempotência e arquiva a conversa antiga cifrada (ela não é retomada pelo bot porque ainda não tem vínculo administrativo verificado). Os bancos em `.test/` são fixtures descartáveis e não entram no import.
+
+Com as migrations `000001`–`000007` aplicadas no destino e as variáveis de `backend/.env` carregadas, rode primeiro o dry-run:
+
+```sh
+cd backend
+set -a && . ./.env && set +a
+LYNX_IMPORT_DATABASE_URL="$DATABASE_URL" go run ./cmd/import-sqlite --source ../lynx-os.db
+```
+
+Confira as contagens e só então acrescente `--apply`. O destino deve estar vazio nas tabelas de integrações, operações, auditoria e arquivo Telegram; o importador falha sem escrever se não estiver. A aplicação ocorre em uma transação PostgreSQL. Mantenha o arquivo SQLite e um backup independente até validar integrações e login no destino.
 
 ## Integrações
 
@@ -29,7 +43,7 @@ Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API
 
 No EasyBill já é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após o prazo. Criação individual de cliente e usuário ainda não está disponível no endpoint EasyBill: até ela ser implementada, use o bootstrap em **Novo cadastro** para criar uma nova empresa com o cliente inicial e o owner.
 
-Os registros atuais do SQLite foram inventariados e permanecem preservados como fonte de migração; o Next não os consulta mais em runtime. As chaves OpenAI, Telegram, `LYNX_JWT_SIGNING_KEY` e `LYNX_ENCRYPTION_KEY` devem vir do gerenciador de segredos do ambiente de deploy. A rotação do JWT encerra sessões; a rotação da chave de cifragem exige recriptografar registros antes de descartar a chave antiga.
+Os registros atuais do SQLite permanecem preservados como fonte de migração; o Next não os consulta em runtime. As chaves OpenAI, Telegram, `LYNX_JWT_SIGNING_KEY` e `LYNX_ENCRYPTION_KEY` devem vir do gerenciador de segredos do ambiente de deploy. A rotação do JWT encerra sessões; a rotação da chave de cifragem exige recriptografar registros antes de descartar a chave antiga.
 
 ## Testes
 
