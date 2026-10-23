@@ -50,9 +50,27 @@ func TestExecuteRejectsIdempotencyKeyWithDifferentPayload(t *testing.T) {
 	}
 }
 
+func TestExecuteCanRetryFailedOperationWithSameKey(t *testing.T) {
+	remote := &fakeSaaS{response: domain.Response{ContractVersion: "1", Operation: "resource.update", Status: "completed", Data: json.RawMessage(`{"id":"customer-1"}`)}, failures: 1}
+	store := &fakeOperationRepository{records: map[string]domain.ProvisioningRecord{}}
+	service := NewService(fakeIntegrationRepository{}, store, fakeCipher{}, NewContractService(remote))
+	command := domain.Command{Operation: "resource.update", Input: map[string]any{"resourceType": "customer", "accountId": "account-1", "id": "customer-1", "name": "Acme"}}
+	if _, err := service.Execute(context.Background(), "integration-1", "owner-1", "request-1", command, "request-key-001"); !errors.Is(err, ErrSaaSExecution) {
+		t.Fatalf("expected SaaS failure, got %v", err)
+	}
+	response, err := service.Execute(context.Background(), "integration-1", "owner-1", "request-2", command, "request-key-001")
+	if err != nil || response.Status != "completed" {
+		t.Fatalf("retry did not complete: response=%#v err=%v", response, err)
+	}
+	if remote.executions != 2 || len(store.audits) != 2 || store.audits[0].Result != "failed" || store.audits[1].Result != "completed" {
+		t.Fatalf("retry history was not recorded: calls=%d audits=%#v", remote.executions, store.audits)
+	}
+}
+
 type fakeSaaS struct {
 	executions int
 	response   domain.Response
+	failures   int
 }
 
 func (f *fakeSaaS) Discover(context.Context, string, string) (domain.Capabilities, error) {
@@ -60,6 +78,10 @@ func (f *fakeSaaS) Discover(context.Context, string, string) (domain.Capabilitie
 }
 func (f *fakeSaaS) Execute(_ context.Context, _, _ string, command domain.Command, _ string) (domain.Response, error) {
 	f.executions++
+	if f.failures > 0 {
+		f.failures--
+		return domain.Response{}, errors.New("network timeout")
+	}
 	response := f.response
 	response.Operation = command.Operation
 	return response, nil
@@ -103,6 +125,11 @@ func (f *fakeOperationRepository) StartProvisioning(_ context.Context, item doma
 	if existing, ok := f.records[key]; ok {
 		if existing.PayloadHash != item.PayloadHash {
 			return domain.ProvisioningRecord{}, false, domain.ErrIdempotencyConflict
+		}
+		if existing.Status == "failed" {
+			existing.Status = "pending"
+			f.records[key] = existing
+			return existing, true, nil
 		}
 		return existing, false, nil
 	}
