@@ -19,6 +19,7 @@ import (
 	telegramapp "github.com/lynx/lynx-os/backend/internal/application/telegram"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/health"
 	identitydomain "github.com/lynx/lynx-os/backend/internal/domain/identity"
+	telegramdomain "github.com/lynx/lynx-os/backend/internal/domain/telegram"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/cryptox"
 	"github.com/lynx/lynx-os/backend/internal/infrastructure/mailgun"
 	openaiinfra "github.com/lynx/lynx-os/backend/internal/infrastructure/openai"
@@ -125,12 +126,19 @@ func main() {
 		router.Mount("/api/v1/integrations", identityHandler.ProtectedMiddleware(integrationhttp.NewHandler(integrationService).Routes()))
 	}
 	if cfg.TelegramBotToken != "" {
-		if identityService == nil || integrationService == nil || cipher == nil || cfg.OpenAIAPIKey == "" {
-			logger.Error("Telegram bot requires administrator auth, integration encryption, and OPENAI_API_KEY")
+		if identityService == nil || integrationService == nil || cipher == nil {
+			logger.Error("Telegram bot requires administrator auth and integration encryption")
 			os.Exit(1)
 		}
 		telegramRepository := postgres.NewTelegramRepository(db)
-		telegramService := telegramapp.NewService(telegramRepository, postgres.NewIdentityRepository(db), identityService, integrationService, openaiinfra.NewDraftExtractor(cfg.OpenAIAPIKey, cfg.OpenAIModel), cipher)
+		var extractor telegramdomain.DraftExtractor
+		if cfg.OpenAIAPIKey == "" {
+			extractor = telegramapp.UnavailableDraftExtractor{}
+			logger.Warn("Telegram worker enabled without OPENAI_API_KEY; menus and linking are available, AI draft collection is disabled")
+		} else {
+			extractor = openaiinfra.NewDraftExtractor(cfg.OpenAIAPIKey, cfg.OpenAIModel)
+		}
+		telegramService := telegramapp.NewService(telegramRepository, postgres.NewIdentityRepository(db), identityService, integrationService, extractor, cipher)
 		worker := telegramapp.NewWorker(telegrambot.NewClient(cfg.TelegramBotToken), telegramService, telegramRepository, logger)
 		go worker.Run(ctx)
 		logger.Info("Telegram bot worker enabled in Go API process")

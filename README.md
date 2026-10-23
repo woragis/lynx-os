@@ -13,7 +13,7 @@ Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir 
 
 ## Telegram
 
-O polling e a lógica do bot estão dentro do processo HTTP Go. Configure `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `OPENAI_MODEL` e `LYNX_ENCRYPTION_KEY` em `backend/.env`. O worker usa long polling, dispensa webhook público e adquire um advisory lock PostgreSQL para manter apenas um poller ativo; conversas são cifradas no PostgreSQL.
+O polling e a lógica do bot estão dentro do processo HTTP Go. Configure `TELEGRAM_BOT_TOKEN` e `LYNX_ENCRYPTION_KEY` em `backend/.env`; adicione `OPENAI_API_KEY` e `OPENAI_MODEL` para ativar a coleta inteligente. Sem a chave OpenAI, `/start`, menus e vínculo continuam ativos, mas a IA não organiza mensagens naturais. O worker usa long polling, dispensa webhook público e adquire um advisory lock PostgreSQL para manter apenas um poller ativo; conversas são cifradas no PostgreSQL.
 
 O uso exige conta administrativa ativa vinculada pela página Segurança e pelo comando `/link CÓDIGO`. `/start` abre o menu; a IA usa a Responses API com saída JSON estruturada para preencher o rascunho incremental e não envia mutações sem confirmação. `OPENAI_MODEL` tem padrão `gpt-6-luna`. As chaves do Telegram e OpenAI ficam somente no ambiente do backend Go.
 
