@@ -21,8 +21,8 @@ function TextField({ name, label, required = false, optional = false, type = "te
   </label>;
 }
 
-export function ProvisioningForm({ integrations, idempotencyKey }: { integrations: IntegrationOption[]; idempotencyKey: string }) {
-  const initialState: ProvisionFormState = { values: { idempotencyKey }, fieldErrors: {}, revision: 0 };
+export function ProvisioningForm({ integrations, idempotencyKey, selectedIntegrationId }: { integrations: IntegrationOption[]; idempotencyKey: string; selectedIntegrationId?: string }) {
+  const initialState: ProvisionFormState = { values: { idempotencyKey, integrationId: selectedIntegrationId ?? "" }, fieldErrors: {}, revision: 0 };
   const [state, formAction, pending] = useActionState(provisionAction, initialState);
   return <ProvisioningFields key={state.revision} state={state} formAction={formAction} pending={pending} integrations={integrations} idempotencyKey={idempotencyKey} />;
 }
