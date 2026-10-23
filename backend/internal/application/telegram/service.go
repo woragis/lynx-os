@@ -80,13 +80,30 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 	if strings.HasPrefix(text, "/link ") {
 		code := strings.TrimSpace(strings.TrimPrefix(text, "/link "))
 		if err := s.linker.LinkTelegramIdentity(ctx, telegramID, code); err != nil {
-			return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Código inválido ou expirado. Gere outro na área Segurança do Lynx OS."}, nil
+			conversation, data, loadErr := s.loadConversation(ctx, telegramID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Código inválido ou expirado. Gere outro na área Segurança do Lynx OS."}, "")
 		}
-		return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Telegram vinculado. Toque em /start para abrir o menu."}, nil
+		user, err := s.identities.FindByTelegramUserID(ctx, telegramID)
+		if err != nil {
+			return nil, err
+		}
+		conversation, _, err := s.loadConversation(ctx, telegramID)
+		if err != nil {
+			return nil, err
+		}
+		conversation.State = "MENU"
+		return s.saveReply(ctx, conversation, domain.ConversationData{}, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Telegram vinculado. Escolha uma ação:", Buttons: menuButtons()}, user.ID)
 	}
 	user, err := s.identities.FindByTelegramUserID(ctx, telegramID)
 	if err != nil {
-		return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Para usar o Lynx AI Assistant, entre em Segurança no Lynx OS, gere um código e envie /link CÓDIGO aqui."}, nil
+		conversation, data, loadErr := s.loadConversation(ctx, telegramID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Para usar o Lynx AI Assistant, entre em Segurança no Lynx OS, gere um código e envie /link CÓDIGO aqui."}, "")
 	}
 	if !user.Active {
 		return nil, nil
@@ -126,10 +143,9 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 		return s.saveReply(ctx, conversation, data, reply, user.ID)
 	}
 	if text == "/cancelar" || strings.EqualFold(text, "cancelar") || text == "menu:cancel" {
-		if err := s.conversations.DeleteConversation(ctx, telegramID); err != nil {
-			return nil, err
-		}
-		return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Rascunho descartado.", Buttons: menuButtons()}, nil
+		conversation.State = "MENU"
+		data = domain.ConversationData{}
+		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Ação cancelada. Escolha uma opção:", Buttons: menuButtons()}, user.ID)
 	}
 	if !user.Role.Allows(identitydomain.PermissionViewIntegrations) {
 		return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Sua conta não tem acesso aos sistemas Lynx."}, nil
@@ -282,8 +298,9 @@ func (s *Service) confirm(ctx context.Context, userID, telegramID string, chatID
 	if err != nil {
 		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "O SaaS não confirmou o cadastro. Responda CONFIRMAR para tentar de novo com a mesma chave segura, ou CANCELAR."}, userID)
 	}
-	_ = s.conversations.DeleteConversation(ctx, telegramID)
-	return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: formatOperationResult(response), Buttons: menuButtons()}, nil
+	conversation.State = "MENU"
+	data = domain.ConversationData{}
+	return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: formatOperationResult(response) + "\n\nEscolha a próxima ação:", Buttons: menuButtons()}, userID)
 }
 
 func (s *Service) chooseAccount(ctx context.Context, userID string, chatID int64, callbackID string, conversation domain.Conversation, data domain.ConversationData) (*domain.Reply, error) {
@@ -443,8 +460,9 @@ func (s *Service) executePending(ctx context.Context, userID, telegramID string,
 	if err != nil {
 		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "O SaaS não confirmou a operação. Responda CONFIRMAR para tentar novamente com a mesma chave, ou CANCELAR."}, userID)
 	}
-	_ = s.conversations.DeleteConversation(ctx, telegramID)
-	return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Operação concluída no SaaS.", Buttons: menuButtons()}, nil
+	conversation.State = "MENU"
+	data = domain.ConversationData{}
+	return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Operação concluída no SaaS.\n\nEscolha a próxima ação:", Buttons: menuButtons()}, userID)
 }
 
 func (s *Service) saveReply(ctx context.Context, conversation domain.Conversation, data domain.ConversationData, reply *domain.Reply, userID string) (*domain.Reply, error) {
@@ -456,7 +474,9 @@ func (s *Service) saveReply(ctx context.Context, conversation domain.Conversatio
 	if err != nil {
 		return nil, err
 	}
-	conversation.AdminUserID = userID
+	if userID != "" {
+		conversation.AdminUserID = userID
+	}
 	if conversation.ExpiresAt.IsZero() || conversation.ExpiresAt.Before(s.now().Add(30*time.Minute)) {
 		conversation.ExpiresAt = s.now().Add(24 * time.Hour)
 	}
@@ -475,8 +495,9 @@ func (s *Service) loadConversation(ctx context.Context, telegramID string) (doma
 		return domain.Conversation{}, domain.ConversationData{}, err
 	}
 	if conversation.ExpiresAt.Before(s.now()) {
-		_ = s.conversations.DeleteConversation(ctx, telegramID)
-		return domain.Conversation{TelegramUserID: telegramID, State: "MENU", ExpiresAt: s.now().Add(24 * time.Hour)}, domain.ConversationData{}, nil
+		conversation.State = "MENU"
+		conversation.ExpiresAt = s.now().Add(24 * time.Hour)
+		return conversation, domain.ConversationData{}, nil
 	}
 	plain, err := s.cipher.Decrypt(sealed)
 	if err != nil {

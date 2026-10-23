@@ -21,6 +21,16 @@ type Client struct {
 	api   string
 }
 
+type apiError struct {
+	method      string
+	statusCode  int
+	description string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("telegram API %s failed (status %d): %s", e.method, e.statusCode, strings.TrimSpace(e.description))
+}
+
 func NewClient(token string) *Client {
 	return &Client{token: token, http: &http.Client{Timeout: 35 * time.Second}, api: "https://api.telegram.org"}
 }
@@ -92,6 +102,19 @@ func (c *Client) Send(ctx context.Context, reply *domain.Reply) (int64, error) {
 		if err == nil {
 			return *reply.MessageID, nil
 		}
+		if remote, ok := err.(*apiError); ok {
+			description := strings.ToLower(remote.description)
+			if strings.Contains(description, "message is not modified") {
+				return *reply.MessageID, nil
+			}
+			if !strings.Contains(description, "message to edit not found") && !strings.Contains(description, "message can't be edited") {
+				return 0, err
+			}
+		} else {
+			// A timeout can happen after Telegram applied the edit. Sending a new
+			// message in that case would create a duplicate menu.
+			return 0, err
+		}
 	}
 	body := map[string]any{"chat_id": reply.ChatID, "text": reply.Text, "reply_markup": markup}
 	var result struct {
@@ -146,7 +169,7 @@ func (c *Client) call(ctx context.Context, method string, query url.Values, body
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.OK {
-		return fmt.Errorf("telegram API %s failed (status %d): %s", method, resp.StatusCode, strings.TrimSpace(envelope.Description))
+		return &apiError{method: method, statusCode: resp.StatusCode, description: envelope.Description}
 	}
 	if out != nil && len(envelope.Result) > 0 {
 		return json.Unmarshal(envelope.Result, out)
