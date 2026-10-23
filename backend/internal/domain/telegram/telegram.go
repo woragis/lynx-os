@@ -57,6 +57,8 @@ type DraftExtractor interface {
 type System struct{ ID, Name, Slug string }
 
 type Draft struct {
+	Intent            string  `json:"intent,omitempty"`
+	AssistantReply    string  `json:"assistantReply,omitempty"`
 	IntegrationName   *string `json:"integrationName"`
 	AccountName       *string `json:"accountName"`
 	AccountTaxID      *string `json:"accountTaxId"`

@@ -264,7 +264,25 @@ func (s *Service) collectProvisioning(ctx context.Context, userID, telegramID st
 	if err != nil {
 		return &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Não consegui organizar essa mensagem. Continue em linguagem natural ou tente separar as informações em frases."}, nil
 	}
+	if draft.Intent == "other" {
+		// Keep any in-progress registration intact, but don't turn unrelated chat
+		// into a confusing checklist of required fields.
+		hasDraft := len(missingFields(data.Draft)) < 11 || data.Draft.IntegrationName != nil
+		if hasDraft {
+			conversation.State = "COLLECTING"
+		} else {
+			conversation.State = "MENU"
+			data = domain.ConversationData{}
+		}
+		reply := strings.TrimSpace(draft.AssistantReply)
+		if reply == "" {
+			reply = "Bolo de chocolate é uma excelente decisão 😄 Eu sou a assistente da Lynx: ajudo a cadastrar e gerenciar dados nos seus SaaS com menos cliques e sem abrir cada site. Escolha uma ação nos botões ou me conte qual cadastro quer iniciar."
+		}
+		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: reply, Buttons: menuButtons()}, userID)
+	}
 	draft = mergeDraft(draft, data.Draft)
+	draft.Intent = ""
+	draft.AssistantReply = ""
 	normalizeDraft(&draft)
 	data.Draft = draft
 	selected := selectSystem(draft.IntegrationName, integrations)
