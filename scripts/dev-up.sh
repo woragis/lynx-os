@@ -15,7 +15,19 @@ start_process() {
     if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
       old_args="$(ps -p "$old_pid" -o args= 2>/dev/null || true)"
       case "$name:$old_args" in
-        api:*lynx-api*|web:*next*) echo "$name já está ativo (PID $old_pid)."; return ;;
+        api:*lynx-api*)
+          running_inode="$(stat -Lc '%i' "/proc/$old_pid/exe" 2>/dev/null || true)"
+          current_inode="$(stat -Lc '%i' "$root/.local/bin/lynx-api" 2>/dev/null || true)"
+          if [[ -n "$running_inode" && "$running_inode" == "$current_inode" ]]; then
+            echo "$name já está ativo e atualizado (PID $old_pid)."; return
+          fi
+          echo "API compilada novamente; reiniciando o processo antigo (PID $old_pid)."
+          kill "$old_pid"
+          for _ in $(seq 1 10); do kill -0 "$old_pid" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$old_pid" 2>/dev/null; then kill -KILL "$old_pid"; fi
+          rm -f "$pid_file"
+          ;;
+        web:*next*) echo "$name já está ativo (PID $old_pid)."; return ;;
       esac
     fi
     rm -f "$pid_file"

@@ -125,25 +125,28 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 				message += " Digite PURGAR para confirmar a ação permanente."
 				buttons = [][]domain.Button{{{Text: "Cancelar", Data: "menu:cancel"}}}
 			}
-			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: message, Buttons: buttons}, user.ID)
+			reply := &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: message, Buttons: buttons}
+			startFreshMessage(update, &conversation, reply)
+			return s.saveReply(ctx, conversation, data, reply, user.ID)
 		}
 		if conversation.State == "AWAITING_CONFIRMATION" && data.Draft.UserEmail != nil {
 			selected, selectErr := s.activeIntegration(ctx, data.IntegrationID)
 			if selectErr != nil {
 				return nil, selectErr
 			}
-			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: formatPreview(data.Draft, selected.Name), Buttons: [][]domain.Button{{{Text: "Confirmar cadastro", Data: "confirm"}, {Text: "Cancelar", Data: "menu:cancel"}}}}, user.ID)
+			reply := &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: formatPreview(data.Draft, selected.Name), Buttons: [][]domain.Button{{{Text: "Confirmar cadastro", Data: "confirm"}, {Text: "Cancelar", Data: "menu:cancel"}}}}
+			startFreshMessage(update, &conversation, reply)
+			return s.saveReply(ctx, conversation, data, reply, user.ID)
 		}
 		if conversation.State == "COLLECTING" {
-			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Seu rascunho continua salvo. Envie os próximos dados em linguagem natural; use Cancelar para descartar.", Buttons: [][]domain.Button{{{Text: "Cancelar rascunho", Data: "menu:cancel"}}}}, user.ID)
+			reply := &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "Seu rascunho continua salvo. Envie os próximos dados em linguagem natural; use Cancelar para descartar.", Buttons: [][]domain.Button{{{Text: "Cancelar rascunho", Data: "menu:cancel"}}}}
+			startFreshMessage(update, &conversation, reply)
+			return s.saveReply(ctx, conversation, data, reply, user.ID)
 		}
 		conversation.State = "MENU"
 		data = domain.ConversationData{}
-		reply := menuReply(chatID, callbackID, "Lynx OS pronto. Escolha uma ação; posso coletar um cadastro em linguagem natural e pedir confirmação antes de enviar.")
-		if update.Message != nil {
-			reply.DeleteMessageID = conversation.BotMessageID
-			conversation.BotMessageID = nil
-		}
+		reply := menuReply(chatID, callbackID, "Lynx OS pronto. Toque em Novo cadastro ou descreva o que precisa; vou perguntar apenas o que faltar.")
+		startFreshMessage(update, &conversation, reply)
 		return s.saveReply(ctx, conversation, data, reply, user.ID)
 	}
 	if text == "/cancelar" || strings.EqualFold(text, "cancelar") || text == "menu:cancel" {
@@ -167,7 +170,19 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 	if conversation.State == "COLLECTING" {
 		return s.collectProvisioning(ctx, user.ID, telegramID, chatID, callbackID, text, conversation, data)
 	}
-	return s.saveReply(ctx, conversation, data, menuReply(chatID, callbackID, "Escolha Novo cadastro ou Listar empresas, clientes e usuários."), user.ID)
+	if update.Message != nil && text != "" && !strings.HasPrefix(text, "/") {
+		conversation.State = "COLLECTING"
+		return s.collectProvisioning(ctx, user.ID, telegramID, chatID, callbackID, text, conversation, data)
+	}
+	return s.saveReply(ctx, conversation, data, menuReply(chatID, callbackID, "Escolha uma ação nos botões ou descreva em linguagem natural o que precisa."), user.ID)
+}
+
+func startFreshMessage(update domain.Update, conversation *domain.Conversation, reply *domain.Reply) {
+	if update.Message == nil || !isStart(strings.TrimSpace(update.Message.Text)) {
+		return
+	}
+	reply.DeleteMessageID = conversation.BotMessageID
+	conversation.BotMessageID = nil
 }
 
 func (s *Service) handleCallback(ctx context.Context, userID string, chatID int64, callbackID, dataValue string, conversation domain.Conversation, data domain.ConversationData) (*domain.Reply, error) {
