@@ -13,7 +13,7 @@ cd backend && set -a && . ./.env && set +a && go run ./cmd/http
 - `GET /health/live`: processo HTTP ativo.
 - `GET /health/ready`: verifica PostgreSQL e Redis e responde `503` se qualquer dependência não estiver pronta.
 
-As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. A `000001` cria o armazenamento de integrações, operações, conversas e auditoria; a `000002` adiciona identidade administrativa, sessões revogáveis, tokens de redefinição e vínculos do Telegram; a `000003` adiciona convites de administradores e códigos temporários de vínculo; a `000004` escopa idempotência por integração e registra ator/operação/request ID. Elas precisam ser aplicadas em ordem antes de iniciar o backend.
+As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. Aplique-as em ordem com `./scripts/migrate-postgres.sh`; o script registra checksums e detecta alterações retroativas. O guia de credenciais, backup/restore, health probes e cutover está em `docs/operacao.md`.
 
 ## Contrato SaaS Lynx v1
 
@@ -25,7 +25,7 @@ Configure `LYNX_JWT_SIGNING_KEY` com pelo menos 32 bytes aleatórios. `GET /api/
 
 Depois de aplicar as migrations, crie o primeiro owner interativamente com `cd backend && set -a && . ./.env && set +a && go run ./cmd/create-admin`. A senha é lida sem eco, precisa ter de 12 a 72 bytes e é armazenada com bcrypt. O comando recusa criar outro owner. A API oferece login/logout, sessões revogáveis, redefinição de senha de uso único e convites de 24 horas. Em `LYNX_ENV=dev` ou `development`, a recuperação envia por SMTP ao Mailpit local; não precisa de Mailgun. Suba o serviço pelo compose e abra `http://localhost:8025` para ler a mensagem e copiar o link. O Mailpit captura a mensagem e não a entrega ao endereço real. Fora de desenvolvimento, o backend exige `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_FROM` e `LYNX_PUBLIC_URL`. Somente o owner pode convidar e alterar administradores. Os papéis `admin`, `operator` e `viewer` têm permissões distintas para integrações. O JWT secret nunca deve ser rotacionado sem plano de invalidar sessões existentes.
 
-O owner pode gerar um código Telegram de uso único, válido por 10 minutos, em `POST /api/v1/auth/telegram/link-code`. O vínculo só é concluído quando um bot consome esse código usando o ID numérico da conta Telegram; os códigos expiram e somente seus hashes são persistidos. A migração do processo atual do bot para dentro deste servidor Go ainda é uma etapa separada.
+O owner pode gerar um código Telegram de uso único, válido por 10 minutos, em `POST /api/v1/auth/telegram/link-code`. O bot de polling roda dentro do processo Go quando `TELEGRAM_BOT_TOKEN` e `OPENAI_API_KEY` estão configurados; requer vínculo de administrador e usa PostgreSQL para conversa, deduplicação e lock de instância única. Para conectar o bot do zero, configure os secrets no backend e reinicie o processo.
 
 ## Cadastro e revogação de integrações
 

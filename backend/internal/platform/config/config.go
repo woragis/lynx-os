@@ -1,6 +1,13 @@
 package config
 
-import "github.com/caarlos0/env/v11"
+import (
+	"encoding/hex"
+	"errors"
+	"net/url"
+	"strings"
+
+	"github.com/caarlos0/env/v11"
+)
 
 type Config struct {
 	HTTPAddr              string `env:"LYNX_HTTP_ADDR" envDefault:":8082"`
@@ -29,5 +36,29 @@ func Load() (Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func (c Config) Validate() error {
+	if c.ReadTimeout < 1 || c.WriteTimeout < 1 {
+		return errors.New("HTTP read/write timeouts must be positive")
+	}
+	if !strings.EqualFold(c.Environment, "production") {
+		return nil
+	}
+	if len(c.JWTSigningKey) < 32 {
+		return errors.New("LYNX_JWT_SIGNING_KEY must contain at least 32 characters in production")
+	}
+	key, err := hex.DecodeString(c.EncryptionKey)
+	if err != nil || len(key) != 32 {
+		return errors.New("LYNX_ENCRYPTION_KEY must be 64 hexadecimal characters in production")
+	}
+	publicURL, err := url.ParseRequestURI(c.PublicURL)
+	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" {
+		return errors.New("LYNX_PUBLIC_URL must be an HTTPS URL in production")
+	}
+	return nil
 }
