@@ -3,12 +3,116 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/integration"
 )
 
 type IntegrationRepository struct{ pool *pgxpool.Pool }
+
+func (r *IntegrationRepository) StartProvisioning(ctx context.Context, item domain.ProvisioningRecord) (domain.ProvisioningRecord, bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.ProvisioningRecord{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO provisioning_records
+		(id,idempotency_key,integration_id,payload_hash,payload_ciphertext,payload_iv,payload_auth_tag,status,operation,actor_user_id,request_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,'pending',$8,NULLIF($9,''),$10)
+		ON CONFLICT(integration_id,idempotency_key) DO NOTHING`,
+		item.ID, item.IdempotencyKey, item.IntegrationID, item.PayloadHash, item.Payload.Ciphertext, item.Payload.IV, item.Payload.AuthTag, item.Operation, item.ActorUserID, item.RequestID)
+	if err != nil {
+		return domain.ProvisioningRecord{}, false, err
+	}
+	var stored domain.ProvisioningRecord
+	var responseCipher, responseIV, responseTag *string
+	var updatedAt time.Time
+	err = tx.QueryRow(ctx, `SELECT id,integration_id,idempotency_key,payload_hash,payload_ciphertext,payload_iv,payload_auth_tag,
+		response_ciphertext,response_iv,response_auth_tag,status,operation,COALESCE(actor_user_id,''),COALESCE(request_id,''),updated_at
+		FROM provisioning_records WHERE integration_id=$1 AND idempotency_key=$2 FOR UPDATE`, item.IntegrationID, item.IdempotencyKey).
+		Scan(&stored.ID, &stored.IntegrationID, &stored.IdempotencyKey, &stored.PayloadHash, &stored.Payload.Ciphertext, &stored.Payload.IV, &stored.Payload.AuthTag,
+			&responseCipher, &responseIV, &responseTag, &stored.Status, &stored.Operation, &stored.ActorUserID, &stored.RequestID, &updatedAt)
+	if err != nil {
+		return domain.ProvisioningRecord{}, false, err
+	}
+	if stored.PayloadHash != item.PayloadHash {
+		return domain.ProvisioningRecord{}, false, domain.ErrIdempotencyConflict
+	}
+	if responseCipher != nil && responseIV != nil && responseTag != nil {
+		stored.Response = &domain.SealedSecret{Ciphertext: *responseCipher, IV: *responseIV, AuthTag: *responseTag}
+	}
+	created := stored.ID == item.ID
+	if !created && (stored.Status == "failed" || (stored.Status == "pending" && time.Since(updatedAt) > 5*time.Minute)) {
+		_, err = tx.Exec(ctx, `UPDATE provisioning_records SET status='pending',updated_at=now() WHERE id=$1`, stored.ID)
+		if err != nil {
+			return domain.ProvisioningRecord{}, false, err
+		}
+		stored.Status = "pending"
+		// This request owns the retry after the old attempt was marked failed or abandoned.
+		created = true
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.ProvisioningRecord{}, false, err
+	}
+	return stored, created, nil
+}
+
+func (r *IntegrationRepository) CompleteProvisioning(ctx context.Context, id string, response domain.SealedSecret, audit domain.AuditEntry) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE provisioning_records SET status='completed',response_ciphertext=$2,response_iv=$3,response_auth_tag=$4,updated_at=now() WHERE id=$1 AND status='pending'`, id, response.Ciphertext, response.IV, response.AuthTag)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("provisioning record is not pending")
+	}
+	if err := insertAudit(ctx, tx, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IntegrationRepository) FailProvisioning(ctx context.Context, id string, audit domain.AuditEntry) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE provisioning_records SET status='failed',updated_at=now() WHERE id=$1 AND status='pending'`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("provisioning record is not pending")
+	}
+	if err := insertAudit(ctx, tx, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *IntegrationRepository) WriteAudit(ctx context.Context, entry domain.AuditEntry) error {
+	return insertAudit(ctx, r.pool, entry)
+}
+
+type sqlExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func insertAudit(ctx context.Context, executor sqlExecutor, entry domain.AuditEntry) error {
+	if entry.ID == "" {
+		return errors.New("could not allocate audit id")
+	}
+	_, err := executor.Exec(ctx, `INSERT INTO audit_logs(id,action,integration_id,request_id,result,actor_user_id,resource_type,resource_id) VALUES($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`, entry.ID, entry.Action, entry.IntegrationID, entry.RequestID, entry.Result, entry.ActorUserID, entry.ResourceType, entry.ResourceID)
+	return err
+}
 
 func NewIntegrationRepository(pool *pgxpool.Pool) *IntegrationRepository {
 	return &IntegrationRepository{pool: pool}

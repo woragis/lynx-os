@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	application "github.com/lynx/lynx-os/backend/internal/application/integration"
 	identitydomain "github.com/lynx/lynx-os/backend/internal/domain/identity"
 	domain "github.com/lynx/lynx-os/backend/internal/domain/integration"
@@ -24,11 +25,29 @@ func NewHandler(service *application.Service) *Handler {
 func (h *Handler) Routes() chi.Router {
 	router := chi.NewRouter()
 	router.With(identityhttp.RequirePermission(identitydomain.PermissionViewIntegrations)).Get("/", h.list)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionViewIntegrations)).Get("/{id}/capabilities", h.capabilities)
 	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Post("/", h.create)
 	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Put("/{id}/api-key", h.rotateKey)
 	router.With(identityhttp.RequirePermission(identitydomain.PermissionRunOperations)).Post("/{id}/operations", h.execute)
 	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Delete("/{id}", h.revoke)
 	return router
+}
+
+func (h *Handler) capabilities(w http.ResponseWriter, r *http.Request) {
+	capabilities, err := h.service.Capabilities(r.Context(), chi.URLParam(r, "id"))
+	if errors.Is(err, domain.ErrIntegrationNotFound) {
+		writeJSON(w, http.StatusNotFound, apiError("integration_not_found", "Integration was not found"))
+		return
+	}
+	if errors.Is(err, application.ErrIntegrationRevoked) {
+		writeJSON(w, http.StatusConflict, apiError("integration_inactive", "Integration is inactive or revoked"))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, apiError("saas_unavailable", "Could not load SaaS capabilities"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": capabilities})
 }
 
 type createRequest struct {
@@ -120,7 +139,8 @@ func (h *Handler) execute(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	response, err := h.service.Execute(r.Context(), chi.URLParam(r, "id"), domain.Command{
+	actor, _, _ := identityhttp.CurrentPrincipal(r)
+	response, err := h.service.Execute(r.Context(), chi.URLParam(r, "id"), actor.ID, middleware.GetReqID(r.Context()), domain.Command{
 		Operation: input.Operation,
 		Input:     input.Input,
 	}, r.Header.Get("Idempotency-Key"))
@@ -135,6 +155,14 @@ func (h *Handler) execute(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, application.ErrInvalidOperation) {
 			writeJSON(w, http.StatusUnprocessableEntity, apiError("invalid_operation", "Operation is invalid or not advertised by the SaaS"))
+			return
+		}
+		if errors.Is(err, domain.ErrIdempotencyConflict) {
+			writeJSON(w, http.StatusConflict, apiError("idempotency_conflict", "Idempotency key was already used with a different request"))
+			return
+		}
+		if errors.Is(err, domain.ErrOperationInProgress) {
+			writeJSON(w, http.StatusConflict, apiError("operation_in_progress", "Operation with this idempotency key is still in progress"))
 			return
 		}
 		writeJSON(w, http.StatusBadGateway, apiError("saas_operation_failed", "SaaS operation failed"))

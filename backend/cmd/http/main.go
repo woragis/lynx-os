@@ -112,7 +112,8 @@ func main() {
 		}
 		contractClient := saasclient.NewContractV1Client(nil)
 		contractService := integrationapp.NewContractService(contractClient)
-		integrationService := integrationapp.NewService(postgres.NewIntegrationRepository(db), cipher, contractService)
+		integrationRepository := postgres.NewIntegrationRepository(db)
+		integrationService := integrationapp.NewService(integrationRepository, integrationRepository, cipher, contractService)
 		router.Mount("/api/v1/integrations", identityHandler.ProtectedMiddleware(integrationhttp.NewHandler(integrationService).Routes()))
 	}
 

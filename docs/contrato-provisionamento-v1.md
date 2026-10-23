@@ -43,6 +43,10 @@ Toda escrita inclui `Idempotency-Key` com 8 a 128 caracteres seguros. Repetir a 
 
 A chave de cada integração é distinta, revogável e enviada apenas no header. Segredos ficam fora do banco da aplicação SaaS; registros de idempotência guardam hashes, IDs e resultado mínimo, nunca o segredo ou o payload pessoal completo.
 
+O Lynx OS espelha operações de escrita em `provisioning_records`, com unicidade por integração e chave, hash do comando e payload/resposta cifrados. Repetir a mesma chave e comando devolve a resposta central armazenada; a mesma chave com outro comando retorna `409 idempotency_conflict`. Uma operação em andamento retorna `409 operation_in_progress`; tentativas que falharam ou ficaram pendentes por mais de cinco minutos podem ser repetidas com a mesma chave remota, para o SaaS reconciliar pelo próprio registro de idempotência. Listagens e consultas não exigem chave e não são retidas como operações de escrita.
+
+Cada tentativa concluída ou falha também gera auditoria de ator, integração, ação, tipo/ID opaco do recurso, request ID e resultado. A auditoria não armazena payload, credenciais ou dados pessoais.
+
 ## Respostas
 
 Sucesso segue o envelope:

@@ -32,6 +32,22 @@ type Repository interface {
 	Revoke(context.Context, string) (Record, error)
 }
 
+type ProvisioningRecord struct {
+	ID, IntegrationID, IdempotencyKey, PayloadHash string
+	Payload                                        SealedSecret
+	Response                                       *SealedSecret
+	Status, Operation, ActorUserID, RequestID      string
+}
+
+type AuditEntry struct{ ID, ActorUserID, IntegrationID, Action, ResourceType, ResourceID, RequestID, Result string }
+
+type OperationRepository interface {
+	StartProvisioning(context.Context, ProvisioningRecord) (ProvisioningRecord, bool, error)
+	CompleteProvisioning(context.Context, string, SealedSecret, AuditEntry) error
+	FailProvisioning(context.Context, string, AuditEntry) error
+	WriteAudit(context.Context, AuditEntry) error
+}
+
 type SecretCipher interface {
 	Encrypt([]byte) (SealedSecret, error)
 	Decrypt(SealedSecret) ([]byte, error)
@@ -43,6 +59,8 @@ var (
 	ErrInvalidCommand             = errors.New("command is invalid")
 	ErrIdempotencyKeyRequired     = errors.New("idempotency key is required for writes")
 	ErrIntegrationNotFound        = errors.New("integration not found")
+	ErrIdempotencyConflict        = errors.New("idempotency key conflict")
+	ErrOperationInProgress        = errors.New("operation in progress")
 )
 
 type ServiceDescriptor struct {
