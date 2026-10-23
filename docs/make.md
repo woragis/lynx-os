@@ -36,10 +36,10 @@ URLs padrão:
 - API Go: <http://localhost:8082>
 - Saúde da API: <http://localhost:8082/health/ready>
 - Mailpit: <http://localhost:8025>
-- PostgreSQL: `localhost:5433`
-- Redis: `localhost:6380`
+- PostgreSQL: `localhost:5453`
+- Redis: `localhost:6382`
 
-O comando `make down` não usa `docker compose down -v`; os dados PostgreSQL permanecem no volume `lynx_postgres`. Para apagar dados, remova volumes Docker deliberadamente fora do fluxo normal de encerramento.
+`make up` reutiliza uma API ou frontend Lynx que já esteja respondendo nas portas padrão, evitando iniciar cópias que disputem a mesma porta. `make down` encerra os processos registrados pelo Make e não encerra processos preexistentes que ele não iniciou. Também não usa `docker compose down -v`; o banco permanece no volume `lynx-os-dev-pgdata`. Para apagar dados, remova esse volume deliberadamente fora do fluxo normal de encerramento.
 
 ## Telegram e OpenAI
 

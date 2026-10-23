@@ -4,6 +4,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 run_dir="$root/.local/run"; log_dir="$root/.local/logs"
 mkdir -p "$run_dir" "$log_dir" "$root/.local/bin"
 chmod 700 "$root/.local" "$run_dir"
+docker volume create lynx-os-dev-pgdata >/dev/null
 docker compose -f "$root/backend/compose.yaml" up -d --wait
 "$root/scripts/with-backend-env.sh" "$root/backend/scripts/migrate-postgres.sh"
 (cd "$root/backend" && go build -o "$root/.local/bin/lynx-api" ./cmd/http)
@@ -18,6 +19,14 @@ start_process() {
       esac
     fi
     rm -f "$pid_file"
+  fi
+  if [[ "$name" == api ]] && curl --silent --fail http://127.0.0.1:8082/health/ready >/dev/null 2>&1; then
+    echo "API já está respondendo em http://localhost:8082; processo existente mantido."
+    return
+  fi
+  if [[ "$name" == web ]] && curl --silent --fail http://127.0.0.1:3100/ >/dev/null 2>&1; then
+    echo "Frontend já está respondendo em http://localhost:3100; processo existente mantido."
+    return
   fi
   nohup "$@" >>"$log_dir/$name.log" 2>&1 </dev/null &
   echo "$!" > "$pid_file"; echo "$name iniciado (PID $!)."

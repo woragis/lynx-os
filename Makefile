@@ -36,6 +36,7 @@ logs:
 	@tail -n 100 -f "$(ROOT)/.local/logs/api.log" "$(ROOT)/.local/logs/web.log"
 
 infra-up:
+	@docker volume create lynx-os-dev-pgdata >/dev/null
 	@docker compose -f "$(ROOT)/backend/compose.yaml" up -d --wait
 infra-down:
 	@docker compose -f "$(ROOT)/backend/compose.yaml" down

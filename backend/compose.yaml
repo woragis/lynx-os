@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: lynx
       POSTGRES_PASSWORD: lynx_dev_only
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5453:5432"
     volumes:
       - lynx_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -17,7 +17,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6382:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,3 +31,5 @@ services:
       - "127.0.0.1:8025:8025"
 volumes:
   lynx_postgres:
+    external: true
+    name: lynx-os-dev-pgdata

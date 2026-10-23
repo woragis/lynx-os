@@ -27,9 +27,9 @@ Em **Segurança**, cada administrador pode encerrar sessões, redefinir a própr
 
 O polling e a lógica do bot estão dentro do processo HTTP Go. Configure <code>TELEGRAM_BOT_TOKEN</code> e <code>LYNX_ENCRYPTION_KEY</code> em <code>backend/.env</code>; <code>OPENAI_API_KEY</code> e <code>OPENAI_MODEL</code> habilitam coleta inteligente. Sem a chave OpenAI, <code>/start</code>, menus e vínculo continuam disponíveis, mas a IA não organiza mensagens naturais. O worker usa long polling e lock advisory PostgreSQL para manter um poller ativo; conversas são cifradas.
 
-Suba PostgreSQL, Redis e Mailpit:
+Suba PostgreSQL, Redis e Mailpit pela raiz do repositório:
 
-    docker compose -f backend/compose.yaml up -d
+    make infra-up
 
 Configure <code>backend/.env</code> com <code>LYNX_JWT_SIGNING_KEY</code> e <code>LYNX_ENCRYPTION_KEY</code>, aplique migrations com <code>./backend/scripts/migrate-postgres.sh</code> e crie o owner:
 
