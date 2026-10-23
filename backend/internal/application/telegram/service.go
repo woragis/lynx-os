@@ -140,6 +140,10 @@ func (s *Service) HandleUpdate(ctx context.Context, update domain.Update) (*doma
 		conversation.State = "MENU"
 		data = domain.ConversationData{}
 		reply := menuReply(chatID, callbackID, "Lynx OS pronto. Escolha uma ação; posso coletar um cadastro em linguagem natural e pedir confirmação antes de enviar.")
+		if update.Message != nil {
+			reply.DeleteMessageID = conversation.BotMessageID
+			conversation.BotMessageID = nil
+		}
 		return s.saveReply(ctx, conversation, data, reply, user.ID)
 	}
 	if text == "/cancelar" || strings.EqualFold(text, "cancelar") || text == "menu:cancel" {

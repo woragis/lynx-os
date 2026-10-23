@@ -87,6 +87,11 @@ func (c *Client) Send(ctx context.Context, reply *domain.Reply) (int64, error) {
 	if reply == nil {
 		return 0, nil
 	}
+	if reply.DeleteMessageID != nil {
+		body := map[string]any{"chat_id": reply.ChatID, "message_id": *reply.DeleteMessageID}
+		var ignored any
+		_ = c.call(ctx, "deleteMessage", nil, body, &ignored)
+	}
 	markup := map[string]any{"inline_keyboard": [][]map[string]string{}}
 	for _, row := range reply.Buttons {
 		buttons := []map[string]string{}
@@ -107,7 +112,7 @@ func (c *Client) Send(ctx context.Context, reply *domain.Reply) (int64, error) {
 			if strings.Contains(description, "message is not modified") {
 				return *reply.MessageID, nil
 			}
-			if !strings.Contains(description, "message to edit not found") && !strings.Contains(description, "message can't be edited") {
+			if remote.statusCode != http.StatusBadRequest {
 				return 0, err
 			}
 		} else {

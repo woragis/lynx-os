@@ -114,4 +114,5 @@ type Reply struct {
 	CallbackQueryID string
 	ChatID          int64
 	MessageID       *int64
+	DeleteMessageID *int64
 }
