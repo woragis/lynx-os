@@ -23,13 +23,11 @@ func NewHandler(service *application.Service) *Handler {
 
 func (h *Handler) Routes() chi.Router {
 	router := chi.NewRouter()
-	router.Get("/", h.list)
-	admins := identityhttp.RequireRoles(identitydomain.RoleOwner, identitydomain.RoleAdmin)
-	operators := identityhttp.RequireRoles(identitydomain.RoleOwner, identitydomain.RoleAdmin, identitydomain.RoleOperator)
-	router.With(admins).Post("/", h.create)
-	router.With(admins).Put("/{id}/api-key", h.rotateKey)
-	router.With(operators).Post("/{id}/operations", h.execute)
-	router.With(admins).Delete("/{id}", h.revoke)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionViewIntegrations)).Get("/", h.list)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Post("/", h.create)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Put("/{id}/api-key", h.rotateKey)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionRunOperations)).Post("/{id}/operations", h.execute)
+	router.With(identityhttp.RequirePermission(identitydomain.PermissionManageIntegrations)).Delete("/{id}", h.revoke)
 	return router
 }
 

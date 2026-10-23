@@ -143,6 +143,36 @@ func TestOwnerCannotDeactivateTheirOwnAccountThroughAdminUpdate(t *testing.T) {
 	}
 }
 
+func TestDeactivatingAdministratorRevokesAllAccessSessions(t *testing.T) {
+	repository := newFakeRepository()
+	hash, err := bcrypt.GenerateFromPassword([]byte("a-long-test-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.usersByEmail["operator@lynx.test"] = domain.User{
+		ID: "operator-1", Email: "operator@lynx.test", PasswordHash: string(hash),
+		DisplayName: "Operator", Role: domain.RoleOperator, Active: true,
+	}
+	service := newTestService(t, repository, &fakeLimiter{})
+	first, err := service.Login(context.Background(), "operator@lynx.test", "a-long-test-password", "127.0.0.1", "browser one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Login(context.Background(), "operator@lynx.test", "a-long-test-password", "127.0.0.1", "browser two")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.UpdateAdmin(context.Background(), "owner-1", "operator-1", "Operator", domain.RoleOperator, false); err != nil {
+		t.Fatalf("deactivate administrator: %v", err)
+	}
+	for _, accessToken := range []string{first.AccessToken, second.AccessToken} {
+		if _, _, err := service.Authenticate(context.Background(), accessToken); !errors.Is(err, domain.ErrSessionRevoked) {
+			t.Fatalf("session remained usable after account deactivation: %v", err)
+		}
+	}
+}
+
 func newTestService(t *testing.T, repository *fakeRepository, limiter *fakeLimiter) *Service {
 	return newTestServiceWithMailer(t, repository, limiter, nil)
 }
@@ -303,8 +333,24 @@ func (r *fakeRepository) AcceptInvitation(_ context.Context, tokenHash, password
 func (r *fakeRepository) ListAdmins(context.Context) ([]domain.AdminSummary, error) {
 	return nil, nil
 }
-func (r *fakeRepository) UpdateAdmin(context.Context, string, string, domain.Role, bool) (domain.AdminSummary, error) {
-	return domain.AdminSummary{}, nil
+func (r *fakeRepository) UpdateAdmin(_ context.Context, id, displayName string, role domain.Role, active bool) (domain.AdminSummary, error) {
+	for email, user := range r.usersByEmail {
+		if user.ID != id {
+			continue
+		}
+		if user.Role == domain.RoleOwner {
+			return domain.AdminSummary{}, domain.ErrCannotModifyOwner
+		}
+		user.DisplayName = displayName
+		user.Role = role
+		user.Active = active
+		r.usersByEmail[email] = user
+		if !active {
+			_ = r.RevokeAllSessions(context.Background(), id)
+		}
+		return domain.AdminSummary{ID: user.ID, Email: user.Email, DisplayName: user.DisplayName, Role: user.Role, Active: user.Active}, nil
+	}
+	return domain.AdminSummary{}, domain.ErrUserNotFound
 }
 func (r *fakeRepository) CreateTelegramLinkCode(_ context.Context, _, _, tokenHash string, _ time.Time) error {
 	r.telegramCodeHash = tokenHash

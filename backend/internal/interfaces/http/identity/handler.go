@@ -57,9 +57,9 @@ func (h *Handler) Routes() chi.Router {
 		protected.Delete("/sessions/{sessionID}", h.revokeSession)
 		protected.Post("/sessions/revoke-all", h.revokeAll)
 		protected.Post("/telegram/link-code", h.telegramLinkCode)
-		protected.With(RequireRoles(domain.RoleOwner)).Get("/admins", h.listAdmins)
-		protected.With(RequireRoles(domain.RoleOwner)).Post("/admins/invitations", h.inviteAdmin)
-		protected.With(RequireRoles(domain.RoleOwner)).Patch("/admins/{id}", h.updateAdmin)
+		protected.With(RequirePermission(domain.PermissionManageAdmins)).Get("/admins", h.listAdmins)
+		protected.With(RequirePermission(domain.PermissionManageAdmins)).Post("/admins/invitations", h.inviteAdmin)
+		protected.With(RequirePermission(domain.PermissionManageAdmins)).Patch("/admins/{id}", h.updateAdmin)
 	})
 	return router
 }
@@ -88,6 +88,23 @@ func RequireRoles(roles ...domain.Role) func(http.Handler) http.Handler {
 				return
 			}
 			if _, ok := allowed[user.Role]; !ok {
+				writeJSON(w, http.StatusForbidden, errorBody("forbidden", "Insufficient permission"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func RequirePermission(permission domain.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, _, ok := CurrentPrincipal(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, errorBody("unauthorized", "Authentication required"))
+				return
+			}
+			if !user.Role.Allows(permission) {
 				writeJSON(w, http.StatusForbidden, errorBody("forbidden", "Insufficient permission"))
 				return
 			}

@@ -8,12 +8,36 @@ import (
 
 type Role string
 
+type Permission string
+
 const (
 	RoleOwner    Role = "owner"
 	RoleAdmin    Role = "admin"
 	RoleOperator Role = "operator"
 	RoleViewer   Role = "viewer"
 )
+
+const (
+	PermissionViewIntegrations   Permission = "integrations:view"
+	PermissionManageIntegrations Permission = "integrations:manage"
+	PermissionRunOperations      Permission = "operations:run"
+	PermissionManageAdmins       Permission = "admins:manage"
+)
+
+func (role Role) Allows(permission Permission) bool {
+	switch permission {
+	case PermissionViewIntegrations:
+		return role == RoleOwner || role == RoleAdmin || role == RoleOperator || role == RoleViewer
+	case PermissionManageIntegrations:
+		return role == RoleOwner || role == RoleAdmin
+	case PermissionRunOperations:
+		return role == RoleOwner || role == RoleAdmin || role == RoleOperator
+	case PermissionManageAdmins:
+		return role == RoleOwner
+	default:
+		return false
+	}
+}
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid credentials")
