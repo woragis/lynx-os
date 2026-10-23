@@ -333,6 +333,15 @@ func (s *Service) confirm(ctx context.Context, userID, telegramID string, chatID
 	requestID := "telegram-" + data.IdempotencyKey
 	response, err := s.integrations.Execute(ctx, selected.ID, userID, requestID, payload, data.IdempotencyKey)
 	if err != nil {
+		if errors.Is(err, integrationdomain.ErrOperationInProgress) {
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "⏳ Esta solicitação ainda está sendo processada. Aguarde alguns instantes antes de tentar novamente."}, userID)
+		}
+		var remoteErr *integrationdomain.RemoteError
+		if errors.As(err, &remoteErr) && remoteErr.StatusCode == 409 {
+			conversation.State = "MENU"
+			data = domain.ConversationData{}
+			return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "⚠️ O EasyBill recusou o cadastro porque já existe um registro com parte desses dados, como o CNPJ ou e-mail da empresa. Para evitar duplicidade, não vou repetir o cadastro. Confira as empresas nos botões abaixo.", Buttons: menuButtons()}, userID)
+		}
 		return s.saveReply(ctx, conversation, data, &domain.Reply{ChatID: chatID, CallbackQueryID: callbackID, Text: "O SaaS não confirmou o cadastro. Responda CONFIRMAR para tentar de novo com a mesma chave segura, ou CANCELAR."}, userID)
 	}
 	conversation.State = "MENU"

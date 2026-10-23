@@ -13,6 +13,8 @@ import (
 
 type IntegrationRepository struct{ pool *pgxpool.Pool }
 
+const abandonedProvisioningAfter = 45 * time.Second
+
 func (r *IntegrationRepository) StartProvisioning(ctx context.Context, item domain.ProvisioningRecord) (domain.ProvisioningRecord, bool, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -45,7 +47,7 @@ func (r *IntegrationRepository) StartProvisioning(ctx context.Context, item doma
 		stored.Response = &domain.SealedSecret{Ciphertext: *responseCipher, IV: *responseIV, AuthTag: *responseTag}
 	}
 	created := stored.ID == item.ID
-	if !created && (stored.Status == "failed" || (stored.Status == "pending" && time.Since(updatedAt) > 5*time.Minute)) {
+	if !created && (stored.Status == "failed" || (stored.Status == "pending" && time.Since(updatedAt) > abandonedProvisioningAfter)) {
 		_, err = tx.Exec(ctx, `UPDATE provisioning_records SET status='pending',updated_at=now() WHERE id=$1`, stored.ID)
 		if err != nil {
 			return domain.ProvisioningRecord{}, false, err

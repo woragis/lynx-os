@@ -300,7 +300,9 @@ func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, co
 	}
 	response, err := s.contract.Execute(ctx, item.BaseURL, string(apiKey), command, idempotencyKey)
 	if err != nil {
-		_ = s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed"))
+		if failErr := s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed")); failErr != nil {
+			return domain.Response{}, errors.Join(fmt.Errorf("%w: %w", ErrSaaSExecution, err), fmt.Errorf("record operation failure: %w", failErr))
+		}
 		if errors.Is(err, domain.ErrInvalidCommand) || errors.Is(err, domain.ErrIdempotencyKeyRequired) || errors.Is(err, domain.ErrOperationUnsupported) {
 			return domain.Response{}, fmt.Errorf("%w: %v", ErrInvalidOperation, err)
 		}
@@ -308,12 +310,16 @@ func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, co
 	}
 	encodedResponse, err := json.Marshal(response)
 	if err != nil {
-		_ = s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed"))
+		if failErr := s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed")); failErr != nil {
+			return domain.Response{}, errors.Join(err, fmt.Errorf("record operation failure: %w", failErr))
+		}
 		return domain.Response{}, err
 	}
 	sealedResponse, err := s.cipher.Encrypt(encodedResponse)
 	if err != nil {
-		_ = s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed"))
+		if failErr := s.operations.FailProvisioning(ctx, record.ID, auditEntry(record.ID, actorID, id, command, requestID, "failed")); failErr != nil {
+			return domain.Response{}, errors.Join(err, fmt.Errorf("record operation failure: %w", failErr))
+		}
 		return domain.Response{}, err
 	}
 	if err := s.operations.CompleteProvisioning(ctx, record.ID, sealedResponse, auditEntry(record.ID, actorID, id, command, requestID, "completed")); err != nil {
@@ -325,7 +331,12 @@ func (s *Service) Execute(ctx context.Context, id, actorID, requestID string, co
 func auditEntry(operationID, actorID, integrationID string, command domain.Command, requestID, result string) domain.AuditEntry {
 	resourceType, _ := command.Input["resourceType"].(string)
 	resourceID, _ := command.Input["id"].(string)
-	return domain.AuditEntry{ID: "audit-" + operationID + "-" + result, ActorUserID: actorID, IntegrationID: integrationID,
+	entryID, err := newID()
+	if err != nil {
+		// O identificador do log também precisa ser diferente em cada tentativa.
+		entryID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return domain.AuditEntry{ID: "audit-" + operationID + "-" + result + "-" + entryID, ActorUserID: actorID, IntegrationID: integrationID,
 		Action: command.Operation, ResourceType: resourceType, ResourceID: resourceID, RequestID: requestID, Result: result}
 }
 
