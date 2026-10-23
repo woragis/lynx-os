@@ -148,7 +148,7 @@ internal/interfaces/
   ...
   grpc/identity/              # empty until needed
 
-migrations/                   # golang-migrate SQL only
+backend/migrations/           # golang-migrate SQL only
 ```
 
 Bounded contexts: **identity**, **notify**, **patient**, **professional**,
@@ -198,7 +198,7 @@ Adapter tests: miniredis.
 | HTTP | **chi v5** (`github.com/go-chi/chi/v5`) | `chi.Router` is `http.Handler`. Handlers are stdlib. Tests use `httptest`. |
 | SQL nucleus | **pgx** + **sqlc** | Identity, patients, professionals, agenda, triage. |
 | SQL admin CRUD | **GORM** | CMS, coupons, affiliates, billing, teleconsultations. Map to domain entities; **no** `gorm.Model` on domain types. |
-| Schema | **golang-migrate** SQL in `migrations/` | Not GORM AutoMigrate. Not sqlc schema. |
+| Schema | **golang-migrate** SQL in `backend/migrations/` | Not GORM AutoMigrate. Not sqlc schema. |
 | Redis | **go-redis/v9** | Only in platform/infrastructure. |
 | Password | `golang.org/x/crypto/bcrypt` | |
 | Access token | `github.com/golang-jwt/jwt/v5` | Short-lived JWT. Refresh is **opaque** in Redis. |

@@ -7,7 +7,7 @@ Use um ambiente explicitamente selecionado. O backend e o Next não devem compar
 ```sh
 docker compose -f backend/compose.yaml up -d postgres redis mailpit
 cd backend && set -a && . ./.env && set +a && cd ..
-./scripts/migrate-postgres.sh
+./backend/scripts/migrate-postgres.sh
 ```
 
 O script aplica as migrations `*.up.sql` em ordem, registra o SHA-256 de cada arquivo e interrompe se uma migration já aplicada tiver sido editada. Mudanças de schema entram sempre em uma nova migration. Faça backup do banco antes de executar em qualquer ambiente com dados. O script não executa migrations `down` automaticamente.

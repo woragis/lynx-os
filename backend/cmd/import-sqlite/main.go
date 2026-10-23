@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	sourcePath := flag.String("source", "../lynx-os.db", "path to the preserved SQLite source database")
+	sourcePath := flag.String("source", "legacy/lynx-os.db", "path to the preserved SQLite source database (backend/legacy/lynx-os.db by default from backend/)")
 	apply := flag.Bool("apply", false, "write the validated import in one PostgreSQL transaction; default is dry-run")
 	inventoryOnly := flag.Bool("inventory-only", false, "check SQLite integrity and print table counts without requiring PostgreSQL or an encryption key")
 	flag.Parse()

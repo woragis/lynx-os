@@ -1,6 +1,6 @@
 # Lynx OS Go backend
 
-Monólito modular com composição em `cmd/http`, camadas domain/application/infrastructure/interfaces e PostgreSQL + Redis. A API atual é a base de migração; o Next.js ainda é a aplicação em uso até as rotas de negócio migrarem e o corte ser planejado.
+Monólito modular com composição em `cmd/http`, camadas domain/application/infrastructure/interfaces e PostgreSQL + Redis. A API Go é o backend de produto; o frontend Next.js fica em `../web/` e encaminha chamadas server-side para esta API.
 
 ## Desenvolvimento
 
@@ -13,7 +13,7 @@ cd backend && set -a && . ./.env && set +a && go run ./cmd/http
 - `GET /health/live`: processo HTTP ativo.
 - `GET /health/ready`: verifica PostgreSQL e Redis e responde `503` se qualquer dependência não estiver pronta.
 
-As migrations SQL ficam em `migrations/` na raiz do repositório e são versionadas. Aplique-as em ordem com `./scripts/migrate-postgres.sh`; o script registra checksums e detecta alterações retroativas. O guia de credenciais, backup/restore, health probes e cutover está em `docs/operacao.md`.
+As migrations SQL versionadas ficam em `backend/migrations/`. A partir da raiz do repositório, aplique-as com `./backend/scripts/migrate-postgres.sh`; o script registra checksums e detecta alterações retroativas. O guia de credenciais, backup/restore, health probes e cutover está em `docs/operacao.md`.
 
 ## Contrato SaaS Lynx v1
 

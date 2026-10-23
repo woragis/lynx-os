@@ -8,8 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
-    "test:unit": "cd backend && go test ./...",
-    "test:postgres": "cd backend && go test ./internal/infrastructure/postgres -count=1",
+    "test:unit": "cd ../backend && go test ./...",
+    "test:postgres": "cd ../backend && go test ./internal/infrastructure/postgres -count=1",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test"
   },

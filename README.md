@@ -1,55 +1,68 @@
 # Lynx OS
 
-Central de operações da Lynx para integrar os SaaS e provisionar empresas, clientes e usuários. O Next.js 16 é a interface; a API Go é responsável por autenticação, regras, persistência PostgreSQL, auditoria, integrações e bot Telegram.
+Central de operações da Lynx para integrar SaaS e administrar empresas/contas, clientes e usuários. O frontend Next.js fica em <code>web/</code>; o backend Go, suas migrations PostgreSQL e ferramentas ficam em <code>backend/</code>. A arquitetura Go segue <code>docs/ARCHITECTURE.md</code>.
 
-## Desenvolvimento
+## Estrutura
 
-1. Copie `.env.example` para `.env` e configure `LYNX_GO_API_URL` e `LYNX_GO_INTERNAL_URL` com a origem local da API Go (`http://localhost:8082`).
-2. Execute `npm install` e `npm run dev`.
+- <code>web/</code>: aplicação Next.js, assets públicos, testes e configuração Node.
+- <code>backend/</code>: API Go, worker Telegram integrado, migrations, scripts e arquivos legados preservados.
+- <code>docs/</code>: arquitetura, contrato SaaS v1 e operação.
 
-O primeiro owner é criado interativamente pelo comando Go `go run ./cmd/create-admin`; a senha não fica em `.env`. `.env` é ignorado pelo Git.
+## Desenvolvimento web
 
-Em **Segurança**, cada administrador pode encerrar sessões abertas, redefinir a própria senha e vincular o Telegram com um código de 8 dígitos válido por 10 minutos. O owner também tem a página **Equipe** para convidar administradores com papéis limitados, alterar papéis e desativar contas. Convites expiram em 24 horas; em desenvolvimento, a redefinição chega ao Mailpit local (`http://localhost:8025`), sem Mailgun. Tokens de sessão e de uso único são armazenados como hashes no PostgreSQL.
+    cd web
+    cp .env.example .env
+    npm install
+    npm run dev
 
-## Telegram
+Configure <code>LYNX_GO_API_URL</code> e <code>LYNX_GO_INTERNAL_URL</code> com a origem local do backend (<code>http://localhost:8082</code>). O primeiro owner é criado interativamente pelo comando Go <code>go run ./cmd/create-admin</code>; a senha não fica no arquivo de ambiente.
 
-O polling e a lógica do bot estão dentro do processo HTTP Go. Configure `TELEGRAM_BOT_TOKEN` e `LYNX_ENCRYPTION_KEY` em `backend/.env`; adicione `OPENAI_API_KEY` e `OPENAI_MODEL` para ativar a coleta inteligente. Sem a chave OpenAI, `/start`, menus e vínculo continuam ativos, mas a IA não organiza mensagens naturais. O worker usa long polling, dispensa webhook público e adquire um advisory lock PostgreSQL para manter apenas um poller ativo; conversas são cifradas no PostgreSQL.
+Em **Segurança**, cada administrador pode encerrar sessões, redefinir a própria senha e vincular Telegram com código de 8 dígitos válido por 10 minutos. O owner pode convidar administradores, alterar papéis e desativar contas. Convites expiram em 24 horas; em desenvolvimento, a recuperação chega ao Mailpit (<code>http://localhost:8025</code>). Tokens de sessão e de uso único são guardados como hashes no PostgreSQL.
 
-O uso exige conta administrativa ativa vinculada pela página Segurança e pelo comando `/link CÓDIGO`. `/start` abre o menu; a IA usa a Responses API com saída JSON estruturada para preencher o rascunho incremental e não envia mutações sem confirmação. `OPENAI_MODEL` tem padrão `gpt-6-luna`. As chaves do Telegram e OpenAI ficam somente no ambiente do backend Go.
+## Backend Go e Telegram
 
-## Backend Go
+O polling e a lógica do bot estão dentro do processo HTTP Go. Configure <code>TELEGRAM_BOT_TOKEN</code> e <code>LYNX_ENCRYPTION_KEY</code> em <code>backend/.env</code>; <code>OPENAI_API_KEY</code> e <code>OPENAI_MODEL</code> habilitam coleta inteligente. Sem a chave OpenAI, <code>/start</code>, menus e vínculo continuam disponíveis, mas a IA não organiza mensagens naturais. O worker usa long polling e lock advisory PostgreSQL para manter um poller ativo; conversas são cifradas.
 
-O backend HTTP em `backend/` segue a arquitetura modular definida em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Autenticação, integrações e operações de SaaS usam Go, PostgreSQL e Redis. O Next faz chamadas server-side à API Go e encaminha as rotas de autenticação same-origin.
+Suba PostgreSQL, Redis e Mailpit:
 
-Para subir PostgreSQL, Redis e Mailpit, execute `docker compose -f backend/compose.yaml up -d`. Copie `backend/.env.example` para `backend/.env`, configure `LYNX_JWT_SIGNING_KEY` (`openssl rand -hex 32`) e `LYNX_ENCRYPTION_KEY`, aplique as migrations `000001` a `000007` e crie o owner com `go run ./cmd/create-admin`. Para ativar o bot integrado, preencha `TELEGRAM_BOT_TOKEN` e `OPENAI_API_KEY` no ambiente do backend. Rode `cd backend && set -a && . ./.env && set +a && go run ./cmd/http`. Em desenvolvimento, abra `http://localhost:8025` para ver os e-mails de recuperação capturados localmente. O Next encaminha `/api/v1/*` ao backend pela rewrite same-origin. Fora de desenvolvimento, configure Mailgun no `.env` do backend.
+    docker compose -f backend/compose.yaml up -d
 
-### Migração do SQLite legado
+Configure <code>backend/.env</code> com <code>LYNX_JWT_SIGNING_KEY</code> e <code>LYNX_ENCRYPTION_KEY</code>, aplique migrations com <code>./backend/scripts/migrate-postgres.sh</code> e crie o owner:
 
-O arquivo `lynx-os.db` está íntegro e foi inventariado: 1 integração, 1 conversa Telegram legada, 0 operações e 0 logs de auditoria. O importador deixa o SQLite intacto; converte a codificação das chaves AES, revalida a descriptografia, importa operações e auditoria preservando idempotência e arquiva a conversa antiga cifrada (ela não é retomada pelo bot porque ainda não tem vínculo administrativo verificado). Os bancos em `.test/` são fixtures descartáveis e não entram no import.
+    cd backend
+    set -a && . ./.env && set +a
+    go run ./cmd/create-admin
+    go run ./cmd/http
 
-Com as migrations `000001`–`000007` aplicadas no destino e as variáveis de `backend/.env` carregadas, rode primeiro o dry-run:
+Para ativar o bot, defina <code>TELEGRAM_BOT_TOKEN</code>; a coleta por IA também exige <code>OPENAI_API_KEY</code>. Em desenvolvimento, consulte e-mails de recuperação no Mailpit local.
 
-```sh
-cd backend
-set -a && . ./.env && set +a
-LYNX_IMPORT_DATABASE_URL="$DATABASE_URL" go run ./cmd/import-sqlite --source ../lynx-os.db
-```
+## Migração do SQLite legado
 
-Confira as contagens e só então acrescente `--apply`. O destino deve estar vazio nas tabelas de integrações, operações, auditoria e arquivo Telegram; o importador falha sem escrever se não estiver. A aplicação ocorre em uma transação PostgreSQL. Mantenha o arquivo SQLite e um backup independente até validar integrações e login no destino.
+O arquivo preservado está em <code>backend/legacy/lynx-os.db</code>. O importador valida integridade e cifra antes de importar; a conversa antiga sem vínculo administrativo confiável fica arquivada e cifrada. Mantenha o backup independente até encerrar a validação de negócio.
+
+Com migrations aplicadas e variáveis do backend carregadas, rode o dry-run a partir de <code>backend/</code>:
+
+    cd backend
+    set -a && . ./.env && set +a
+    LYNX_IMPORT_DATABASE_URL="$DATABASE_URL" go run ./cmd/import-sqlite --source legacy/lynx-os.db
+
+Confira contagens antes de acrescentar <code>--apply</code>. O destino deve estar vazio nas tabelas importadas; a aplicação é transacional e não apaga a fonte SQLite.
 
 ## Integrações
 
-Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e uma API key com os escopos mínimos necessários (`provisioning:read`, `provisioning:write`; `provisioning:purge` somente para purga definitiva). O cadastro valida a conexão antes de salvar. A chave é cifrada com AES-256-GCM usando `LYNX_ENCRYPTION_KEY`. **Empresas e acessos** e **Novo cadastro** usam o mesmo contrato SaaS v1 em `/api/v1/provisioning`; ele anuncia campos e operações disponíveis para cada sistema.
+Cadastre em **SaaS e integrações** o nome, URL da API, URL do painel e API key com escopos mínimos (<code>provisioning:read</code>, <code>provisioning:write</code>; <code>provisioning:purge</code> só para purga definitiva). A chave é cifrada com AES-256-GCM. **Empresas e acessos** e **Novo cadastro** usam o contrato SaaS v1 em <code>/api/v1/provisioning</code>.
 
-No EasyBill já é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após o prazo. Criação individual de cliente e usuário ainda não está disponível no endpoint EasyBill: até ela ser implementada, use o bootstrap em **Novo cadastro** para criar uma nova empresa com o cliente inicial e o owner.
+No EasyBill é possível listar, abrir e editar contas, clientes e vínculos de usuário, além de hibernar, reativar e solicitar purga após retenção. Criação isolada de cliente/usuário ainda não está disponível; use o bootstrap de **Novo cadastro** para criar a empresa com cliente inicial e owner.
 
-Os registros atuais do SQLite permanecem preservados como fonte de migração; o Next não os consulta em runtime. As chaves OpenAI, Telegram, `LYNX_JWT_SIGNING_KEY` e `LYNX_ENCRYPTION_KEY` devem vir do gerenciador de segredos do ambiente de deploy. A rotação do JWT encerra sessões; a rotação da chave de cifragem exige recriptografar registros antes de descartar a chave antiga.
+O Next não consulta SQLite em runtime. Em deploy, injete chaves OpenAI, Telegram, JWT e cifragem por secret manager. Rotacionar a chave de cifragem exige recriptografar os dados antes de descartar a anterior.
 
 ## Testes
 
-- `npm run test:unit`: testes unitários do backend Go.
-- `npm run test:integration`: testes do adaptador Next para a API Go com transporte HTTP mockado; não chama SaaS, Telegram ou OpenAI externos.
-- `npm run test:e2e`: fluxos do painel em Chromium via Playwright. Na primeira execução, instale o navegador com `npx playwright install chromium`.
-- `npm test`: executa os três níveis em sequência.
+Execute os comandos Node a partir de <code>web/</code>:
 
-Os testes automatizados não dependem do banco SQLite original nem de credenciais externas. Os E2E usam uma API de autenticação local simulada e Chromium.
+- <code>npm run test:unit</code>: testes unitários Go.
+- <code>npm run test:integration</code>: adaptador Next para API Go com transporte HTTP simulado.
+- <code>npm run test:e2e</code>: painel em Chromium via Playwright.
+- <code>npm test</code>: executa os três níveis.
+
+Os testes automatizados não dependem do SQLite original nem de credenciais externas. Consulte <code>docs/operacao.md</code> para backups, restore, segurança e cutover.
